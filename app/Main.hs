@@ -10,7 +10,7 @@ import Control.Monad.Trans.Resource
 
 import qualified Data.ByteString as BS
 
-import Init
+import qualified Init
 import Window
 
 import qualified Graphics.UI.GLFW as GLFW
@@ -36,10 +36,10 @@ main = runResourceT $ do
     glfwExtensions <- liftIO $ mapM BS.packCString =<< GLFW.getRequiredInstanceExtensions
     liftIO $ GLFW.makeContextCurrent (Just window)
 
-    inst <- createInstance glfwExtensions
+    inst <- Init.createInstance glfwExtensions
     surface <- createSurface inst window
-    DeviceParams devName phys dev graphicsQueue graphicsQueueFamilyIndex <-
-        createDevice inst (snd surface)
+    Init.DeviceParams devName phys dev graphicsQueue graphicsQueueFamilyIndex <-
+        Init.createDevice inst (snd surface)
     let commandPoolCreateInfo = Vk.zero{Vk.CommandPoolCreateInfo.queueFamilyIndex = graphicsQueueFamilyIndex}
 
     liftIO $
