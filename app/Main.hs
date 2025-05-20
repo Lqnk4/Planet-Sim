@@ -1,7 +1,3 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE DisambiguateRecordFields #-}
-{-# LANGUAGE OverloadedStrings #-}
-
 module Main where
 
 import Control.Monad
@@ -15,9 +11,8 @@ import Window
 
 import qualified Graphics.UI.GLFW as GLFW
 
-import qualified Vulkan.Core10 as Vk hiding (createDevice)
 import qualified Vulkan.Core10 as Vk.CommandPoolCreateInfo (CommandPoolCreateInfo (..))
-import qualified Vulkan.Zero as Vk
+import Vulkan.Zero
 
 main :: IO ()
 main = runResourceT $ do
@@ -40,7 +35,7 @@ main = runResourceT $ do
     surface <- createSurface inst window
     Init.DeviceParams devName phys dev graphicsQueue graphicsQueueFamilyIndex <-
         Init.createDevice inst (snd surface)
-    let commandPoolCreateInfo = Vk.zero{Vk.CommandPoolCreateInfo.queueFamilyIndex = graphicsQueueFamilyIndex}
+    let commandPoolCreateInfo = zero{Vk.CommandPoolCreateInfo.queueFamilyIndex = graphicsQueueFamilyIndex}
 
     liftIO $
         mainloop window $ do

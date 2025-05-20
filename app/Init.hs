@@ -1,17 +1,10 @@
-{-# LANGUAGE DataKinds #-}
-{-# LANGUAGE LambdaCase #-}
-{-# LANGUAGE OverloadedLists #-}
-{-# LANGUAGE OverloadedStrings #-}
-{-# LANGUAGE RankNTypes #-}
-{-# LANGUAGE RecordWildCards #-}
-{-# LANGUAGE TupleSections #-}
+module Init (
+    Init.createInstance,
+    Init.createDevice,
+    DeviceParams (..),
+) where
 
-module Init
-    ( Init.createInstance
-    , Init.createDevice
-    , DeviceParams(..)
-    ) where
-
+import Control.Exception
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Maybe
@@ -25,123 +18,124 @@ import Data.Text.Encoding (decodeUtf8)
 import qualified Data.Vector as V
 import Data.Word
 import Vulkan.CStruct.Extends
+import Vulkan.Core10
+import qualified Vulkan.Core10 as ApplicationInfo (ApplicationInfo (..))
+import qualified Vulkan.Core10 as DeviceCreateInfo (DeviceCreateInfo (..))
+import qualified Vulkan.Core10 as DeviceQueueCreateInfo (DeviceQueueCreateInfo (..))
 import qualified Vulkan.Core10 as MemoryHeap (MemoryHeap (..))
-import qualified Vulkan.Core10 as Vk
-import qualified Vulkan.Core10 as Vk.ApplicationInfo (ApplicationInfo (..))
-import qualified Vulkan.Core10 as Vk.DeviceCreateInfo (DeviceCreateInfo (..))
-import qualified Vulkan.Core10 as Vk.DeviceQueueCreateInfo (DeviceQueueCreateInfo (..))
-import qualified Vulkan.Core13 as Vk
-import qualified Vulkan.Extensions.VK_KHR_surface as Vk
-import qualified Vulkan.Extensions.VK_KHR_swapchain as Vk
-import qualified Vulkan.Requirement as Vk
+import Vulkan.Core13
+import Vulkan.Extensions.VK_KHR_surface
+import Vulkan.Extensions.VK_KHR_swapchain
+import Vulkan.Requirement
 import qualified Vulkan.Utils.Initialization as VkUtils
-import qualified Vulkan.Zero as Vk
+import Vulkan.Zero
 
 myApiVersion :: Word32
-myApiVersion = Vk.API_VERSION_1_3
+myApiVersion = API_VERSION_1_3
 
-createInstance :: forall m. (MonadResource m) => [BS.ByteString] -> m Vk.Instance
+createInstance :: forall m. (MonadResource m) => [BS.ByteString] -> m Instance
 createInstance extraExtensions = do
     VkUtils.createDebugInstanceFromRequirements
-        [Vk.RequireInstanceExtension Nothing n minBound | n <- extraExtensions]
+        [RequireInstanceExtension Nothing n minBound | n <- extraExtensions]
         []
-        Vk.zero
-            { Vk.applicationInfo =
+        zero
+            { applicationInfo =
                 Just
-                    Vk.zero
-                        { Vk.applicationName = Nothing
-                        , Vk.ApplicationInfo.apiVersion = myApiVersion
+                    zero
+                        { applicationName = Nothing
+                        , ApplicationInfo.apiVersion = myApiVersion
                         }
             }
 
 data DeviceParams = DeviceParams
-    { dpDeviceName :: Text
-    , dpPhysicalDevice :: Vk.PhysicalDevice
-    , dpDevice :: Vk.Device
-    , dpGraphicsQueue :: Vk.Queue
-    -- ^ Also the present queue
-    , dpGraphicsQueueFamilyIndex :: Word32
+    { dpDeviceName :: !Text
+    , dpPhysicalDevice :: !PhysicalDevice
+    , dpDevice :: !Device
+    , dpGraphicsQueue :: !Queue
+    , dpGraphicsQueueFamilyIndex :: !Word32
+    , dpPresentQueue :: !Queue
+    , dpPresentQueueFamilyIndex :: !Word32
     }
-    deriving (Show)
+    deriving (Show, Eq)
 
-createDevice :: (MonadResource m, MonadThrow m) => Vk.Instance -> Vk.SurfaceKHR -> m DeviceParams
+createDevice :: (MonadResource m, MonadThrow m) => Instance -> SurfaceKHR -> m DeviceParams
 createDevice inst surf = do
     (pdi, phys) <-
-        pickPhysicalDevice inst (physicalDeviceInfo surf) >>= \case
-            Nothing -> error "Unable to find suitable physical device"
+        VkUtils.pickPhysicalDevice inst (physicalDeviceInfo surf) pdiTotalMemory >>= \case
+            Nothing -> throw (AssertionFailed "Unable to find suitable physical device")
             Just x -> return x
-    devName <- physicalDeviceName phys
 
+    devName <- VkUtils.physicalDeviceName phys
     let graphicsQueueFamilyIndex = pdiGraphicsQueueFamilyIndex pdi
+        presentQueueFamilyIndex = pdiPresentQueueFamilyIndex pdi
         deviceCreateInfo =
-            Vk.zero
-                { Vk.queueCreateInfos =
+            zero
+                { queueCreateInfos =
                     [ SomeStruct
-                        Vk.zero
-                            { Vk.DeviceQueueCreateInfo.queueFamilyIndex = graphicsQueueFamilyIndex
-                            , Vk.queuePriorities = [1]
+                        zero
+                            { DeviceQueueCreateInfo.queueFamilyIndex = graphicsQueueFamilyIndex
+                            , queuePriorities = [1]
+                            }
+                    , SomeStruct
+                        zero
+                            { DeviceQueueCreateInfo.queueFamilyIndex = presentQueueFamilyIndex
+                            , queuePriorities = [1]
                             }
                     ]
-                , Vk.DeviceCreateInfo.enabledExtensionNames = [Vk.KHR_SWAPCHAIN_EXTENSION_NAME]
+                , DeviceCreateInfo.enabledExtensionNames = [KHR_SWAPCHAIN_EXTENSION_NAME]
                 }
-    (_, dev) <- Vk.withDevice phys deviceCreateInfo Nothing allocate
-    graphicsQueue <- Vk.getDeviceQueue dev graphicsQueueFamilyIndex 0
+    (_, dev) <- withDevice phys deviceCreateInfo Nothing allocate
+    graphicsQueue <- getDeviceQueue dev graphicsQueueFamilyIndex 0
+    presentQueue <- getDeviceQueue dev presentQueueFamilyIndex 0
 
-    return $ DeviceParams devName phys dev graphicsQueue graphicsQueueFamilyIndex
+    return $ DeviceParams devName phys dev graphicsQueue graphicsQueueFamilyIndex presentQueue presentQueueFamilyIndex
 
-pickPhysicalDevice ::
-    (MonadIO m, MonadThrow m, Ord a) =>
-    Vk.Instance ->
-    (Vk.PhysicalDevice -> m (Maybe a)) ->
-    m (Maybe (a, Vk.PhysicalDevice))
-pickPhysicalDevice inst devscore = do
-    (_, devs) <- Vk.enumeratePhysicalDevices inst
-    scores <- catMaybes <$> sequence [ fmap (, d) <$> devscore d | d <- V.toList devs]
-    return $ if null scores then Nothing else Just $ V.maximumBy (comparing fst) (V.fromList scores)
-
-deviceHasSwapchain :: (MonadIO m) => Vk.PhysicalDevice -> m Bool
-deviceHasSwapchain dev = do
-    (_, extensions) <- Vk.enumerateDeviceExtensionProperties dev Nothing
-    pure $ V.any ((Vk.KHR_SWAPCHAIN_EXTENSION_NAME ==) . Vk.extensionName) extensions
-
-physicalDeviceName :: (MonadIO m) => Vk.PhysicalDevice -> m Text
-physicalDeviceName phys = do
-    props <- Vk.getPhysicalDeviceProperties phys
-    pure $ decodeUtf8 (Vk.deviceName props)
+deviceHasSwapchain :: (MonadIO m) => PhysicalDevice -> SurfaceKHR -> m Bool
+deviceHasSwapchain dev surf = do
+    (_, extensions) <- enumerateDeviceExtensionProperties dev Nothing
+    let hasSwapchain = V.any ((KHR_SWAPCHAIN_EXTENSION_NAME ==) . extensionName) extensions
+    formats <- getPhysicalDeviceSurfaceFormatsKHR dev surf
+    presentModes <- getPhysicalDeviceSurfacePresentModesKHR dev surf
+    return $ hasSwapchain && not (null formats) && not (null presentModes)
 
 data PhysicalDeviceInfo = PhysicalDeviceInfo
     { pdiTotalMemory :: Word64
     , pdiGraphicsQueueFamilyIndex :: Word32
+    , pdiPresentQueueFamilyIndex :: Word32
     }
-    deriving (Eq, Ord)
+    deriving (Eq)
+
+instance Ord PhysicalDeviceInfo where
+    compare di1 di2 = pdiTotalMemory di1 `compare` pdiTotalMemory di2
 
 {- | Requires the device to have a graphics queue
 
 The graphics queue index will be able to present to the specified surface
 -}
 physicalDeviceInfo ::
-    (MonadIO m) => Vk.SurfaceKHR -> Vk.PhysicalDevice -> m (Maybe PhysicalDeviceInfo)
+    (MonadIO m) => SurfaceKHR -> PhysicalDevice -> m (Maybe PhysicalDeviceInfo)
 physicalDeviceInfo surf phys = runMaybeT $ do
     -- We must be able to use the swapchain extension
-    guard =<< deviceHasSwapchain phys
+    guard =<< deviceHasSwapchain phys surf
 
     -- It must have a graphics and present queue
-    pdiGraphicsQueueFamilyIndex <- do
-        queueFamilyProperties <- Vk.getPhysicalDeviceQueueFamilyProperties phys
+    (pdiGraphicsQueueFamilyIndex, pdiPresentQueueFamilyIndex) <- do
+        -- TODO: support different queues for graphics and present, but prioritize using the same for both
+        queueFamilyProperties <- getPhysicalDeviceQueueFamilyProperties phys
         let isGraphicsQueue q =
-                (Vk.QUEUE_GRAPHICS_BIT .&&. Vk.queueFlags q) && (Vk.queueCount q > 0)
+                (QUEUE_GRAPHICS_BIT .&&. queueFlags q) && (queueCount q > 0)
             graphicsQueueIndices =
                 fromIntegral . fst
                     <$> V.filter
                         (isGraphicsQueue . snd)
                         (V.indexed queueFamilyProperties)
-        let isPresentQueue i = Vk.getPhysicalDeviceSurfaceSupportKHR phys i surf
+        let isPresentQueue i = getPhysicalDeviceSurfaceSupportKHR phys i surf
         presentQueueIndices <- V.filterM isPresentQueue graphicsQueueIndices
         MaybeT (pure $ presentQueueIndices V.!? 0)
 
     -- Score based on the total memory
     pdiTotalMemory <- do
-        heaps <- Vk.memoryHeaps <$> Vk.getPhysicalDeviceMemoryProperties phys
+        heaps <- memoryHeaps <$> getPhysicalDeviceMemoryProperties phys
         pure $ sum (MemoryHeap.size <$> heaps)
 
     return PhysicalDeviceInfo{..}

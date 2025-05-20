@@ -19,11 +19,11 @@ common warnings
 executable HelloTriangle-hs
     import:           warnings
     main-is:          Main.hs
-    other-modules: MonadVulkan,
-                   Init,
+    other-modules: Init,
                    Window,
                    Swapchain,
-                   HasVulkan
+                   HasVulkan,
+                   RefCounted
     -- other-extensions:
     build-depends:    bytestring,
                       base ^>=4.18.3.0,
@@ -34,10 +34,19 @@ executable HelloTriangle-hs
                       VulkanMemoryAllocator,
                       vector,
                       resourcet ^>=1.3.0,
-                      autoapply ^>=4.0,
-                      template-haskell < 2.20,
                       GLFW-b ^>=3.3.9.1,
                       text,
-                      unliftio,
     hs-source-dirs:   app
     default-language: Haskell2010
+    default-extensions: OverloadedStrings, 
+                        DataKinds,
+                        OverloadedStrings, 
+                        DisambiguateRecordFields,
+                        LambdaCase,
+                        RankNTypes,
+                        DerivingStrategies,
+                        GeneralizedNewtypeDeriving,
+                        RecordWildCards,
+                        BangPatterns,
+                        TupleSections,
+                        OverloadedLists,
