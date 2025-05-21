@@ -11,8 +11,9 @@ import Window
 
 import qualified Graphics.UI.GLFW as GLFW
 
-import qualified Vulkan.Core10 as Vk.CommandPoolCreateInfo (CommandPoolCreateInfo (..))
-import Vulkan.Zero
+import Swapchain
+import Vulkan.Core10.APIConstants
+import Vulkan.Core10.FundamentalTypes (Extent2D(..))
 
 main :: IO ()
 main = runResourceT $ do
@@ -28,14 +29,15 @@ main = runResourceT $ do
         winTitle = "My Window"
 
     (_, window) <- createGLFWWindow winWidth winHeight winTitle Nothing Nothing
+    (fbWidth, fbHeight) <- liftIO $ GLFW.getFramebufferSize window
     glfwExtensions <- liftIO $ mapM BS.packCString =<< GLFW.getRequiredInstanceExtensions
     liftIO $ GLFW.makeContextCurrent (Just window)
 
     inst <- Init.createInstance glfwExtensions
-    surface <- createSurface inst window
-    Init.DeviceParams devName phys dev graphicsQueue graphicsQueueFamilyIndex <-
-        Init.createDevice inst (snd surface)
-    let commandPoolCreateInfo = zero{Vk.CommandPoolCreateInfo.queueFamilyIndex = graphicsQueueFamilyIndex}
+    (_, surface) <- createSurface inst window
+    devParams@(Init.DeviceParams devName phys dev graphicsQueue graphicsQueueFamilyIndex presentQueue presentQueueFamilyIndex) <-
+        Init.createDevice inst surface
+    swapchainInfo <- createSwapchain NULL_HANDLE devParams (Extent2D (fromIntegral fbWidth) (fromIntegral fbHeight)) surface
 
     liftIO $
         mainloop window $ do
