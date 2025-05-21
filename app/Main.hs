@@ -14,6 +14,7 @@ import qualified Graphics.UI.GLFW as GLFW
 import Swapchain
 import Vulkan.Core10.APIConstants
 import Vulkan.Core10.FundamentalTypes (Extent2D(..))
+import Data.Bifunctor (Bifunctor(bimap))
 
 main :: IO ()
 main = runResourceT $ do
@@ -29,7 +30,7 @@ main = runResourceT $ do
         winTitle = "My Window"
 
     (_, window) <- createGLFWWindow winWidth winHeight winTitle Nothing Nothing
-    (fbWidth, fbHeight) <- liftIO $ GLFW.getFramebufferSize window
+    (fbWidth, fbHeight) <- liftIO $ bimap fromIntegral fromIntegral <$> GLFW.getFramebufferSize window
     glfwExtensions <- liftIO $ mapM BS.packCString =<< GLFW.getRequiredInstanceExtensions
     liftIO $ GLFW.makeContextCurrent (Just window)
 
@@ -37,7 +38,7 @@ main = runResourceT $ do
     (_, surface) <- createSurface inst window
     devParams@(Init.DeviceParams devName phys dev graphicsQueue graphicsQueueFamilyIndex presentQueue presentQueueFamilyIndex) <-
         Init.createDevice inst surface
-    swapchainInfo <- createSwapchain NULL_HANDLE devParams (Extent2D (fromIntegral fbWidth) (fromIntegral fbHeight)) surface
+    swapchainInfo <- createSwapchain NULL_HANDLE devParams (Extent2D fbWidth fbHeight) surface
 
     liftIO $
         mainloop window $ do

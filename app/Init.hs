@@ -14,9 +14,9 @@ import Control.Monad.Trans.Resource
 import Data.Bitraversable (bisequence)
 import Data.Bits
 import qualified Data.ByteString as BS
+import Data.List (nub)
 import Data.Text (Text)
 import qualified Data.Vector as V
-import Data.Vector (Vector)
 import Data.Word
 import Vulkan.CStruct.Extends
 import Vulkan.Core10
@@ -30,7 +30,6 @@ import Vulkan.Extensions.VK_KHR_swapchain
 import Vulkan.Requirement
 import qualified Vulkan.Utils.Initialization as VkUtils
 import Vulkan.Zero
-import Data.List (nub)
 
 myApiVersion :: Word32
 myApiVersion = API_VERSION_1_3
@@ -75,7 +74,7 @@ createDevice inst surf = do
         presentQueueFamilyIndex = pdiPresentQueueFamilyIndex pdi
         uniqueQueueFamilyIndices = V.fromList $ nub [graphicsQueueFamilyIndex, presentQueueFamilyIndex]
 
-        queueCreateInfos = V.map (\index -> SomeStruct zero { DeviceQueueCreateInfo.queueFamilyIndex = index, queuePriorities = [1] }) uniqueQueueFamilyIndices
+        queueCreateInfos = V.map (\index -> SomeStruct zero{DeviceQueueCreateInfo.queueFamilyIndex = index, queuePriorities = [1]}) uniqueQueueFamilyIndices
 
         deviceCreateInfo =
             zero

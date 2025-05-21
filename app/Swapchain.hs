@@ -11,6 +11,7 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Init (DeviceParams (..), sameGraphicsPresentQueues)
 import Vulkan.Core10
+import qualified Vulkan.Core10 as ImageViewCreateInfo (ImageViewCreateInfo (..))
 import Vulkan.Exception ()
 import Vulkan.Extensions.VK_KHR_surface
 import qualified Vulkan.Extensions.VK_KHR_surface as SurfaceCapabilitiesKHR (SurfaceCapabilitiesKHR (..))
@@ -25,6 +26,7 @@ data SwapchainInfo = SwapchainInfo
     , siSurfaceFormat :: SurfaceFormatKHR
     , siImageExtent :: Extent2D
     , siSurface :: SurfaceKHR
+    , siImageViews :: Vector (ReleaseKey, ImageView)
     }
 
 createSwapchain ::
@@ -96,7 +98,33 @@ createSwapchain oldSwapchain devParams explicitSize surf = do
 
     (releaseKey, swapchain) <- withSwapchainKHR (dpDevice devParams) swapchainCreateInfo Nothing allocate
 
-    return $ SwapchainInfo swapchain releaseKey presentMode surfaceFormat imageExtent surf
+    (_, images) <- getSwapchainImagesKHR (dpDevice devParams) swapchain
+    imageViews <- V.forM images $ \image -> do
+                let imageCreateInfo image = zero
+                            { ImageViewCreateInfo.image = image
+                            , viewType = IMAGE_VIEW_TYPE_2D
+                            , ImageViewCreateInfo.format = SurfaceFormatKHR.format surfaceFormat
+                            , components =
+                                ComponentMapping
+                                    { r = COMPONENT_SWIZZLE_IDENTITY
+                                    , g = COMPONENT_SWIZZLE_IDENTITY
+                                    , b = COMPONENT_SWIZZLE_IDENTITY
+                                    , a = COMPONENT_SWIZZLE_IDENTITY
+                                    }
+                            , ImageViewCreateInfo.subresourceRange =
+                                ImageSubresourceRange
+                                    { aspectMask = IMAGE_ASPECT_COLOR_BIT
+                                    , baseMipLevel = 0
+                                    , levelCount = 1
+                                    , baseArrayLayer = 0
+                                    , layerCount = 1
+                                    }
+                            }
+                withImageView (dpDevice devParams) (imageCreateInfo image) Nothing allocate
+
+
+
+    return $ SwapchainInfo swapchain releaseKey presentMode surfaceFormat imageExtent surf imageViews
 
 chooseSurfaceFormat :: (MonadResource m) => Vector SurfaceFormatKHR -> m SurfaceFormatKHR
 chooseSurfaceFormat formats = do
@@ -105,6 +133,11 @@ chooseSurfaceFormat formats = do
         (Just surfaceFormat) -> surfaceFormat
         Nothing -> throw $ AssertionFailed "Could not find suitable surface format"
 
-infixl 4 .&&.
-(.&&.) :: (Bits a) => a -> a -> Bool
-x .&&. y = (/= zeroBits) (x .&. y)
+
+--
+-- Utils
+--
+
+-- infixl 4 .&&.
+-- (.&&.) :: (Bits a) => a -> a -> Bool
+-- x .&&. y = (/= zeroBits) (x .&. y)
