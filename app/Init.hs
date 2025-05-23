@@ -105,22 +105,20 @@ data PhysicalDeviceInfo = PhysicalDeviceInfo
 
 instance Ord PhysicalDeviceInfo where
     compare di1 di2 =
-        compareDeviceType (pdiDeviceType di1) (pdiDeviceType di2)
+        pdiDeviceType di1 `compareDeviceType` pdiDeviceType di2
             <> (sameGraphicsPresentQueues di1 `compare` sameGraphicsPresentQueues di2)
             <> (pdiTotalMemory di1 `compare` pdiTotalMemory di2)
       where
+        compareDeviceType :: PhysicalDeviceType -> PhysicalDeviceType -> Ordering
+        compareDeviceType t1 t2 = mapPriority t1 `compare` mapPriority t2
+        mapPriority :: PhysicalDeviceType -> Int
+        mapPriority t = case t of
+            PHYSICAL_DEVICE_TYPE_DISCRETE_GPU -> 5
+            PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU -> 4
+            PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU -> 3
+            PHYSICAL_DEVICE_TYPE_CPU -> 2
+            PHYSICAL_DEVICE_TYPE_OTHER -> 1
         sameGraphicsPresentQueues = (==) <$> pdiGraphicsQueueFamilyIndex <*> pdiPresentQueueFamilyIndex
-
-compareDeviceType :: PhysicalDeviceType -> PhysicalDeviceType -> Ordering
-compareDeviceType t1 t2 = mapPriority t1 `compare` mapPriority t2
-  where
-    mapPriority :: PhysicalDeviceType -> Int
-    mapPriority t = case t of
-        PHYSICAL_DEVICE_TYPE_DISCRETE_GPU -> 5
-        PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU -> 4
-        PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU -> 3
-        PHYSICAL_DEVICE_TYPE_CPU -> 2
-        PHYSICAL_DEVICE_TYPE_OTHER -> 1
 
 {- | Requires the device to have a graphics queue
 
@@ -136,7 +134,6 @@ physicalDeviceInfo surf phys = runMaybeT $ do
 
     -- It must have a graphics and present queue
     (pdiGraphicsQueueFamilyIndex, pdiPresentQueueFamilyIndex) <- do
-        -- TODO: support different queues for graphics and present, but prioritize using the same for both
         queueFamilyProperties <- getPhysicalDeviceQueueFamilyProperties phys
         let isGraphicsQueue q = (QUEUE_GRAPHICS_BIT .&&. queueFlags q) && (queueCount q > 0)
         let isPresentQueue i = getPhysicalDeviceSurfaceSupportKHR phys i surf

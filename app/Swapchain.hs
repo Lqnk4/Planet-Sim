@@ -51,8 +51,8 @@ createSwapchain oldSwapchain devParams explicitSize surf = do
     let requiredUsageFlags = [IMAGE_USAGE_COLOR_ATTACHMENT_BIT] :: [ImageUsageFlagBits]
 
     presentMode <- case filter (`V.elem` availablePresentModes) desiredPresentModes of
-        [] -> pure PRESENT_MODE_FIFO_KHR
-        (x : _) -> pure x
+        [] -> return PRESENT_MODE_FIFO_KHR
+        (x : _) -> return x
 
     let imageExtent = case currentExtent (surfaceCaps :: SurfaceCapabilitiesKHR) of
             Extent2D w h | w == maxBound, h == maxBound -> explicitSize

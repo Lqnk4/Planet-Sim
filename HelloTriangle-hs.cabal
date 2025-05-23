@@ -23,7 +23,8 @@ executable HelloTriangle-hs
                    Window,
                    Swapchain,
                    HasVulkan,
-                   RefCounted
+                   RefCounted,
+                   Pipeline
     -- other-extensions:
     build-depends:    bytestring,
                       base ^>=4.18.3.0,
@@ -50,3 +51,4 @@ executable HelloTriangle-hs
                         BangPatterns,
                         TupleSections,
                         OverloadedLists,
+                        QuasiQuotes
