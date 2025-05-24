@@ -15,6 +15,7 @@ import Swapchain
 import Vulkan.Core10.APIConstants
 import Vulkan.Core10.FundamentalTypes (Extent2D(..))
 import Data.Bifunctor (Bifunctor(bimap))
+import Pipeline
 
 main :: IO ()
 main = runResourceT $ do
@@ -36,9 +37,11 @@ main = runResourceT $ do
 
     inst <- Init.createInstance glfwExtensions
     (_, surface) <- createSurface inst window
-    devParams@(Init.DeviceParams devName phys dev graphicsQueue graphicsQueueFamilyIndex presentQueue presentQueueFamilyIndex) <-
-        Init.createDevice inst surface
+    devParams <- Init.createDevice inst surface
+    let dev = Init.dpDevice devParams
     swapchainInfo <- createSwapchain NULL_HANDLE devParams (Extent2D fbWidth fbHeight) surface
+    (_, renderPass) <- createRenderPass dev swapchainInfo
+    (_, graphicsPipeline) <- createPipeline dev swapchainInfo renderPass
 
     liftIO $
         mainloop window $ do
