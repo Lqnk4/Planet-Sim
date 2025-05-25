@@ -4,15 +4,18 @@ module Swapchain (
     SwapchainInfo (..),
     SwapchainResources (..),
     allocSwapchainResources,
+    recreateSwapchainResources
 ) where
 
 import Control.Exception
 import Control.Monad.Trans.Resource
 import Data.Bits
 import Data.Either ()
+import Data.Foldable
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import GHC.Generics (Generic (..))
+import qualified Graphics.UI.GLFW as GLFW
 import Init (DeviceParams (..), sameGraphicsPresentQueues)
 import RefCounted
 import Vulkan.Core10
@@ -23,7 +26,8 @@ import qualified Vulkan.Extensions.VK_KHR_surface as SurfaceCapabilitiesKHR (Sur
 import qualified Vulkan.Extensions.VK_KHR_surface as SurfaceFormatKHR (SurfaceFormatKHR (..))
 import Vulkan.Extensions.VK_KHR_swapchain
 import Vulkan.Zero
-import Data.Foldable
+import Data.Bifunctor
+import Control.Monad.IO.Class
 
 data SwapchainInfo = SwapchainInfo
     { siSwapchain :: SwapchainKHR
@@ -50,14 +54,14 @@ allocSwapchainResources ::
     -- | If swapchain size determines surface size use this
     -- Use GLFW.getFramebufferSize
     DeviceParams ->
-    Extent2D ->
+    GLFW.Window ->
     SurfaceKHR ->
     m SwapchainResources
-allocSwapchainResources oldSwapchain devParams@(DeviceParams{..}) fbSize surface = do
-    srInfo@SwapchainInfo{..} <- createSwapchain oldSwapchain devParams fbSize surface
+allocSwapchainResources oldSwapchain devParams@(DeviceParams{..}) window surface = do
+    srInfo@SwapchainInfo{..} <- createSwapchain oldSwapchain devParams window surface
     (_, srImages) <- getSwapchainImagesKHR dpDevice siSwapchain
 
-    (imageViewKeys, srImageViews) <- fmap V.unzip .  V.forM srImages $ \image -> do
+    (imageViewKeys, srImageViews) <- fmap V.unzip . V.forM srImages $ \image -> do
         let imageCreateInfo image =
                 zero
                     { ImageViewCreateInfo.image = image
@@ -88,17 +92,28 @@ allocSwapchainResources oldSwapchain devParams@(DeviceParams{..}) fbSize surface
 
     return $ SwapchainResources{..}
 
+recreateSwapchainResources ::
+    (MonadResource m) =>
+    GLFW.Window ->
+    SwapchainResources ->
+    DeviceParams ->
+    m SwapchainResources
+recreateSwapchainResources window oldResources devParams = do
+    let oldSwapchain = siSwapchain . srInfo $ oldResources
+        oldSurface = siSurface . srInfo $ oldResources
+    r <- allocSwapchainResources oldSwapchain devParams window oldSurface
+    releaseRefCounted (srRelease oldResources)
+    return r
+
 createSwapchain ::
     (MonadResource m) =>
     -- | old swapchain, can be NULL_HANDLE
     SwapchainKHR ->
-    -- | extent to use if swapchain size determines surface size
-    -- ^ Use GLFW.getFrameBufferSize
     DeviceParams ->
-    Extent2D ->
+    GLFW.Window ->
     SurfaceKHR ->
     m SwapchainInfo
-createSwapchain oldSwapchain devParams@(DeviceParams{..}) fbSize surface = do
+createSwapchain oldSwapchain devParams@(DeviceParams{..}) window surface = do
     surfaceCaps <- getPhysicalDeviceSurfaceCapabilitiesKHR dpPhysicalDevice surface
     (_, availableFormats) <- getPhysicalDeviceSurfaceFormatsKHR dpPhysicalDevice surface
     (_, availablePresentModes) <- getPhysicalDeviceSurfacePresentModesKHR dpPhysicalDevice surface
@@ -107,6 +122,8 @@ createSwapchain oldSwapchain devParams@(DeviceParams{..}) fbSize surface = do
 
     let desiredPresentModes = [PRESENT_MODE_MAILBOX_KHR]
     let requiredUsageFlags = [IMAGE_USAGE_COLOR_ATTACHMENT_BIT] :: [ImageUsageFlagBits]
+
+    fbSize <- liftIO $ uncurry Extent2D . bimap fromIntegral fromIntegral <$> GLFW.getFramebufferSize window
 
     presentMode <- case filter (`V.elem` availablePresentModes) desiredPresentModes of
         [] -> return PRESENT_MODE_FIFO_KHR
