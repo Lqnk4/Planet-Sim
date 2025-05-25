@@ -1,6 +1,9 @@
+{-# LANGUAGE DeriveGeneric #-}
+
 module Swapchain (
-    createSwapchain,
     SwapchainInfo (..),
+    SwapchainResources (..),
+    allocSwapchainResources,
 ) where
 
 import Control.Exception
@@ -9,7 +12,9 @@ import Data.Bits
 import Data.Either ()
 import Data.Vector (Vector)
 import qualified Data.Vector as V
+import GHC.Generics (Generic (..))
 import Init (DeviceParams (..), sameGraphicsPresentQueues)
+import RefCounted
 import Vulkan.Core10
 import qualified Vulkan.Core10 as ImageViewCreateInfo (ImageViewCreateInfo (..))
 import Vulkan.Exception ()
@@ -18,6 +23,7 @@ import qualified Vulkan.Extensions.VK_KHR_surface as SurfaceCapabilitiesKHR (Sur
 import qualified Vulkan.Extensions.VK_KHR_surface as SurfaceFormatKHR (SurfaceFormatKHR (..))
 import Vulkan.Extensions.VK_KHR_swapchain
 import Vulkan.Zero
+import Data.Foldable
 
 data SwapchainInfo = SwapchainInfo
     { siSwapchain :: SwapchainKHR
@@ -26,8 +32,61 @@ data SwapchainInfo = SwapchainInfo
     , siSurfaceFormat :: SurfaceFormatKHR
     , siImageExtent :: Extent2D
     , siSurface :: SurfaceKHR
-    , siImageViews :: Vector (ReleaseKey, ImageView)
     }
+    deriving (Generic)
+
+data SwapchainResources = SwapchainResources
+    { srInfo :: !SwapchainInfo
+    , srImageViews :: Vector ImageView
+    , srImages :: Vector Image
+    , srRelease :: !RefCounted
+    }
+    deriving (Generic)
+
+allocSwapchainResources ::
+    (MonadResource m) =>
+    -- | Previous swapchain, can be NULL_HANDLE
+    SwapchainKHR ->
+    -- | If swapchain size determines surface size use this
+    -- Use GLFW.getFramebufferSize
+    DeviceParams ->
+    Extent2D ->
+    SurfaceKHR ->
+    m SwapchainResources
+allocSwapchainResources oldSwapchain devParams@(DeviceParams{..}) fbSize surface = do
+    srInfo@SwapchainInfo{..} <- createSwapchain oldSwapchain devParams fbSize surface
+    (_, srImages) <- getSwapchainImagesKHR dpDevice siSwapchain
+
+    (imageViewKeys, srImageViews) <- fmap V.unzip .  V.forM srImages $ \image -> do
+        let imageCreateInfo image =
+                zero
+                    { ImageViewCreateInfo.image = image
+                    , viewType = IMAGE_VIEW_TYPE_2D
+                    , ImageViewCreateInfo.format = SurfaceFormatKHR.format siSurfaceFormat
+                    , components =
+                        ComponentMapping
+                            { r = COMPONENT_SWIZZLE_IDENTITY
+                            , g = COMPONENT_SWIZZLE_IDENTITY
+                            , b = COMPONENT_SWIZZLE_IDENTITY
+                            , a = COMPONENT_SWIZZLE_IDENTITY
+                            }
+                    , ImageViewCreateInfo.subresourceRange =
+                        ImageSubresourceRange
+                            { aspectMask = IMAGE_ASPECT_COLOR_BIT
+                            , baseMipLevel = 0
+                            , levelCount = 1
+                            , baseArrayLayer = 0
+                            , layerCount = 1
+                            }
+                    }
+        withImageView dpDevice (imageCreateInfo image) Nothing allocate
+
+    -- This refcount is released in 'recreateSwapchainResources'
+    srRelease <- newRefCounted $ do
+        traverse_ release imageViewKeys
+        release siSwapchainReleaseKey
+
+    return $ SwapchainResources{..}
 
 createSwapchain ::
     (MonadResource m) =>
@@ -39,11 +98,10 @@ createSwapchain ::
     Extent2D ->
     SurfaceKHR ->
     m SwapchainInfo
-createSwapchain oldSwapchain devParams explicitSize surf = do
-    let phys = dpPhysicalDevice devParams
-    surfaceCaps <- getPhysicalDeviceSurfaceCapabilitiesKHR phys surf
-    (_, availableFormats) <- getPhysicalDeviceSurfaceFormatsKHR phys surf
-    (_, availablePresentModes) <- getPhysicalDeviceSurfacePresentModesKHR phys surf
+createSwapchain oldSwapchain devParams@(DeviceParams{..}) fbSize surface = do
+    surfaceCaps <- getPhysicalDeviceSurfaceCapabilitiesKHR dpPhysicalDevice surface
+    (_, availableFormats) <- getPhysicalDeviceSurfaceFormatsKHR dpPhysicalDevice surface
+    (_, availablePresentModes) <- getPhysicalDeviceSurfacePresentModesKHR dpPhysicalDevice surface
 
     surfaceFormat <- chooseSurfaceFormat availableFormats
 
@@ -55,7 +113,7 @@ createSwapchain oldSwapchain devParams explicitSize surf = do
         (x : _) -> return x
 
     let imageExtent = case currentExtent (surfaceCaps :: SurfaceCapabilitiesKHR) of
-            Extent2D w h | w == maxBound, h == maxBound -> explicitSize
+            Extent2D w h | w == maxBound, h == maxBound -> fbSize
             e -> e
 
     let imageCount =
@@ -73,14 +131,14 @@ createSwapchain oldSwapchain devParams explicitSize surf = do
 
     let (imageSharingMode, queueFamilyIndices) =
             if sameGraphicsPresentQueues devParams
-                then (SHARING_MODE_EXCLUSIVE, [dpGraphicsQueueFamilyIndex devParams])
-                else (SHARING_MODE_CONCURRENT, [dpGraphicsQueueFamilyIndex devParams, dpPresentQueueFamilyIndex devParams])
+                then (SHARING_MODE_EXCLUSIVE, [dpGraphicsQueueFamilyIndex])
+                else (SHARING_MODE_CONCURRENT, [dpGraphicsQueueFamilyIndex, dpPresentQueueFamilyIndex])
 
     let swapchainCreateInfo =
             SwapchainCreateInfoKHR
                 { next = ()
                 , flags = zero
-                , surface = surf
+                , surface = surface
                 , minImageCount = imageCount
                 , imageFormat = SurfaceFormatKHR.format surfaceFormat
                 , imageColorSpace = colorSpace surfaceFormat
@@ -96,35 +154,9 @@ createSwapchain oldSwapchain devParams explicitSize surf = do
                 , oldSwapchain = oldSwapchain
                 }
 
-    (releaseKey, swapchain) <- withSwapchainKHR (dpDevice devParams) swapchainCreateInfo Nothing allocate
+    (releaseKey, swapchain) <- withSwapchainKHR dpDevice swapchainCreateInfo Nothing allocate
 
-    (_, images) <- getSwapchainImagesKHR (dpDevice devParams) swapchain
-    imageViews <- V.forM images $ \image -> do
-                let imageCreateInfo image = zero
-                            { ImageViewCreateInfo.image = image
-                            , viewType = IMAGE_VIEW_TYPE_2D
-                            , ImageViewCreateInfo.format = SurfaceFormatKHR.format surfaceFormat
-                            , components =
-                                ComponentMapping
-                                    { r = COMPONENT_SWIZZLE_IDENTITY
-                                    , g = COMPONENT_SWIZZLE_IDENTITY
-                                    , b = COMPONENT_SWIZZLE_IDENTITY
-                                    , a = COMPONENT_SWIZZLE_IDENTITY
-                                    }
-                            , ImageViewCreateInfo.subresourceRange =
-                                ImageSubresourceRange
-                                    { aspectMask = IMAGE_ASPECT_COLOR_BIT
-                                    , baseMipLevel = 0
-                                    , levelCount = 1
-                                    , baseArrayLayer = 0
-                                    , layerCount = 1
-                                    }
-                            }
-                withImageView (dpDevice devParams) (imageCreateInfo image) Nothing allocate
-
-
-
-    return $ SwapchainInfo swapchain releaseKey presentMode surfaceFormat imageExtent surf imageViews
+    return $ SwapchainInfo swapchain releaseKey presentMode surfaceFormat imageExtent surface
 
 chooseSurfaceFormat :: (MonadResource m) => Vector SurfaceFormatKHR -> m SurfaceFormatKHR
 chooseSurfaceFormat formats = do
@@ -132,7 +164,6 @@ chooseSurfaceFormat formats = do
     return $ case best of
         (Just surfaceFormat) -> surfaceFormat
         Nothing -> throw $ AssertionFailed "Could not find suitable surface format"
-
 
 --
 -- Utils
