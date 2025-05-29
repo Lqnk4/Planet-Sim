@@ -22,9 +22,10 @@ executable HelloTriangle-hs
     other-modules: Init,
                    Window,
                    Swapchain,
-                   HasVulkan,
                    RefCounted,
-                   Pipeline
+                   Pipeline,
+                   Frame,
+                   Render,
     -- other-extensions:
     build-depends:    bytestring,
                       base ^>=4.18.3.0,
