@@ -18,6 +18,7 @@ import qualified Vulkan.Core10.FundamentalTypes as Rect2D (Rect2D (..))
 import qualified Vulkan.Core10.Pass as AttachmentDescription (AttachmentDescription (..))
 import qualified Vulkan.Core10.Pass as AttachmentReference (AttachmentReference (..))
 import qualified Vulkan.Core10.Pass as RenderPassCreateInfo (RenderPassCreateInfo (..))
+import qualified Vulkan.Core10.Pass as SubpassDependency (SubpassDependency (..))
 import qualified Vulkan.Core10.Pipeline as PipelineColorBlendStateCreateInfo (PipelineColorBlendStateCreateInfo (..))
 import qualified Vulkan.Core10.Pipeline as PipelineRasterizationStateCreateInfo (PipelineRasterizationStateCreateInfo (..))
 import qualified Vulkan.Core10.Pipeline as PipelineShaderStageCreateInfo (PipelineShaderStageCreateInfo (..))
@@ -150,15 +151,25 @@ createRenderPass dev swapchainInfo = do
                 { AttachmentReference.attachment = 0
                 , AttachmentReference.layout = IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL
                 }
-        subPass =
+        subpass =
             zero
                 { pipelineBindPoint = PIPELINE_BIND_POINT_GRAPHICS
                 , colorAttachments = [colorAttachmentRef]
                 }
+        subpassDependency =
+            zero
+                { srcSubpass = SUBPASS_EXTERNAL
+                , dstSubpass = 0
+                , srcStageMask = PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+                , SubpassDependency.srcAccessMask = zero
+                , dstStageMask = PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT
+                , SubpassDependency.dstAccessMask = ACCESS_COLOR_ATTACHMENT_WRITE_BIT
+                }
         renderPassInfo =
             zero
                 { RenderPassCreateInfo.attachments = [colorAttachment]
-                , subpasses = [subPass]
+                , subpasses = [subpass]
+                , dependencies = [subpassDependency]
                 }
     (renderPassKey, renderPass) <- withRenderPass dev renderPassInfo Nothing allocate
     return (renderPassKey, renderPass)
@@ -171,24 +182,36 @@ createShaders dev = do
     let vertcode =
             [vert|
             #version 450
+
+            layout(location = 0) out vec3 fragColor;
+
             vec2 positions[3] = vec2[](
                 vec2(0.0, -0.5),
-                vec2(-0.5, 0.5),
-                vec2(0.5,0.5)
+                vec2(0.5, 0.5),
+                vec2(-0.5, 0.5)
+            );
+
+            vec3 colors[3] = vec3[](
+                vec3(1.0, 0.0, 0.0),
+                vec3(0.0, 1.0, 0.0),
+                vec3(0.0, 0.0, 1.0)
             );
 
             void main() {
                 gl_Position = vec4(positions[gl_VertexIndex], 0.0, 1.0);
-            }
-        |]
+                fragColor = colors[gl_VertexIndex];
+        }|]
         fragcode =
             [frag|
             #version 450
+
+            layout(location = 0) in vec3 fragColor;
+
             layout(location = 0) out vec4 outColor;
 
             void main() {
-                outColor = vec4(1.0, 0.0, 0.0, 1.0);
-            } 
+                outColor = vec4(fragColor, 1.0);
+            }
         |]
 
     (vertKey, vertModule) <- withShaderModule dev (zero{code = vertcode}) Nothing allocate

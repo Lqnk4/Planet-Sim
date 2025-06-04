@@ -9,11 +9,10 @@ import qualified Data.ByteString as BS
 import qualified Init
 import Window
 
+import Frame (initialFrame)
 import qualified Graphics.UI.GLFW as GLFW
-
-import Pipeline
-import Swapchain
-import Vulkan.Core10.APIConstants
+import Render (renderFrame)
+import Vulkan.Core10
 
 main :: IO ()
 main = runResourceT $ do
@@ -25,7 +24,7 @@ main = runResourceT $ do
         GLFW.windowHint (GLFW.WindowHint'Resizable False)
 
     let winWidth = 800
-        winHeight = 600
+        winHeight = 800
         winTitle = "My Window"
 
     (_, window) <- createGLFWWindow winWidth winHeight winTitle Nothing Nothing
@@ -35,19 +34,18 @@ main = runResourceT $ do
     inst <- Init.createInstance glfwExtensions
     (_, surface) <- createSurface inst window
     devParams <- Init.createDevice inst surface
-    let dev = Init.dpDevice devParams
-    swapchainResources <- allocSwapchainResources NULL_HANDLE devParams window surface
-    (_, renderPass) <- createRenderPass dev (srInfo swapchainResources)
-    (_, graphicsPipeline) <- createPipeline dev (srInfo swapchainResources) renderPass
 
-    liftIO $
-        mainloop window $ do
-            GLFW.pollEvents
-            GLFW.swapBuffers window
+    firstFrame <- initialFrame devParams window surface
 
-mainloop :: GLFW.Window -> IO () -> IO ()
+    mainloop window $ do
+        liftIO GLFW.pollEvents
+        liftIO $ GLFW.swapBuffers window
+        renderFrame devParams firstFrame
+    deviceWaitIdle (Init.dpDevice devParams)
+
+mainloop :: (MonadIO m) => GLFW.Window -> m () -> m ()
 mainloop window draw = do
-    shouldClose <- GLFW.windowShouldClose window
+    shouldClose <- liftIO $ GLFW.windowShouldClose window
     unless shouldClose $ do
         draw
         mainloop window draw

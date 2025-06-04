@@ -49,16 +49,14 @@ data SwapchainResources = SwapchainResources
 
 allocSwapchainResources ::
     (MonadResource m) =>
+    DeviceParams ->
     -- | Previous swapchain, can be NULL_HANDLE
     SwapchainKHR ->
-    -- | If swapchain size determines surface size use this
-    -- Use GLFW.getFramebufferSize
-    DeviceParams ->
     GLFW.Window ->
     SurfaceKHR ->
     m SwapchainResources
-allocSwapchainResources oldSwapchain devParams@(DeviceParams{..}) window surface = do
-    srInfo@SwapchainInfo{..} <- createSwapchain oldSwapchain devParams window surface
+allocSwapchainResources devParams@(DeviceParams{..}) oldSwapchain  window surface = do
+    srInfo@SwapchainInfo{..} <- createSwapchain devParams oldSwapchain window surface
     (_, srImages) <- getSwapchainImagesKHR dpDevice siSwapchain
 
     (imageViewKeys, srImageViews) <- fmap V.unzip . V.forM srImages $ \image -> do
@@ -101,19 +99,19 @@ recreateSwapchainResources ::
 recreateSwapchainResources window oldResources devParams = do
     let oldSwapchain = siSwapchain . srInfo $ oldResources
         oldSurface = siSurface . srInfo $ oldResources
-    r <- allocSwapchainResources oldSwapchain devParams window oldSurface
+    r <- allocSwapchainResources devParams oldSwapchain window oldSurface
     releaseRefCounted (srRelease oldResources)
     return r
 
 createSwapchain ::
     (MonadResource m) =>
+    DeviceParams ->
     -- | old swapchain, can be NULL_HANDLE
     SwapchainKHR ->
-    DeviceParams ->
     GLFW.Window ->
     SurfaceKHR ->
     m SwapchainInfo
-createSwapchain oldSwapchain devParams@(DeviceParams{..}) window surface = do
+createSwapchain devParams@(DeviceParams{..}) oldSwapchain window surface = do
     surfaceCaps <- getPhysicalDeviceSurfaceCapabilitiesKHR dpPhysicalDevice surface
     (_, availableFormats) <- getPhysicalDeviceSurfaceFormatsKHR dpPhysicalDevice surface
     (_, availablePresentModes) <- getPhysicalDeviceSurfacePresentModesKHR dpPhysicalDevice surface

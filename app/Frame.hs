@@ -1,4 +1,8 @@
-module Frame where
+module Frame(
+    Frame(..),
+    RecycledResources(..),
+    initialFrame
+) where
 
 import Control.Monad.Trans.Resource
 import Data.Foldable
@@ -7,12 +11,16 @@ import qualified Data.Vector as V
 import Data.Word
 import qualified Graphics.UI.GLFW as GLFW
 import Init
+import qualified Pipeline
 import RefCounted
 import Swapchain
-import Vulkan.Core10
+import Vulkan.CStruct.Extends
+import Vulkan.Core10 hiding (createCommandPool)
 import qualified Vulkan.Core10.CommandPool as CommandPoolCreateInfo (CommandPoolCreateInfo (..))
+import qualified Vulkan.Core10.Fence as FenceCreateInfo (FenceCreateInfo (..))
 import qualified Vulkan.Core10.FundamentalTypes as Extent2D (Extent2D (..))
 import qualified Vulkan.Core10.Pass as FramebufferCreateInfo (FramebufferCreateInfo (..))
+import Vulkan.Core12
 import Vulkan.Extensions.VK_KHR_surface
 import Vulkan.Zero
 
@@ -34,8 +42,31 @@ data Frame = Frame
 data RecycledResources = RecycledResources
     { fImageAvailableSemaphore :: Semaphore
     , fRenderFinishedSemaphore :: Semaphore
+    , fInFlightFence :: Fence
     , fCommandPool :: CommandPool
     }
+
+initialRecycledResources :: (MonadResource m) => DeviceParams -> m RecycledResources
+initialRecycledResources devParams = do
+    (_, fImageAvailableSemaphore) <-
+        withSemaphore (dpDevice devParams) (zero ::& SemaphoreTypeCreateInfo SEMAPHORE_TYPE_BINARY 0 :& ()) Nothing allocate
+    (_, fRenderFinishedSemaphore) <-
+        withSemaphore (dpDevice devParams) (zero ::& SemaphoreTypeCreateInfo SEMAPHORE_TYPE_BINARY 0 :& ()) Nothing allocate
+    (_, fInFlightFence) <-
+        withFence (dpDevice devParams) (zero{FenceCreateInfo.flags = FENCE_CREATE_SIGNALED_BIT} ::& ()) Nothing allocate
+    (_, fCommandPool) <- createCommandPool devParams
+    return RecycledResources{..}
+
+initialFrame :: (MonadResource m) => DeviceParams -> GLFW.Window -> SurfaceKHR -> m Frame
+initialFrame devParams@DeviceParams{..} fWindow fSurface = do
+    let fIndex = 1
+        oldSwapchain = NULL_HANDLE
+    fSwapchainResources <- allocSwapchainResources devParams oldSwapchain fWindow fSurface
+    (_, fRenderPass) <- Pipeline.createRenderPass dpDevice (srInfo fSwapchainResources)
+    (fReleaseFramebuffers, fFramebuffers) <- createFramebuffers devParams fRenderPass fSwapchainResources
+    (_, fPipeline) <- Pipeline.createPipeline dpDevice (srInfo fSwapchainResources) fRenderPass
+    fRecycledResources <- initialRecycledResources devParams
+    return Frame{..}
 
 createCommandPool :: (MonadResource m) => DeviceParams -> m (ReleaseKey, CommandPool)
 createCommandPool devParams = do

@@ -1,6 +1,8 @@
 {-# LANGUAGE NumDecimals #-}
 
-module Render where
+module Render (
+    renderFrame,
+) where
 
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Resource
@@ -8,11 +10,16 @@ import qualified Data.Vector as V
 import Data.Word
 import Frame
 import Init
+import RefCounted
 import Swapchain
+import Vulkan.CStruct.Extends
 import Vulkan.Core10
 import qualified Vulkan.Core10.CommandBuffer as CommandBufferBeginInfo (CommandBufferBeginInfo (..))
 import qualified Vulkan.Core10.CommandBufferBuilding as RenderPassBeginInfo (RenderPassBeginInfo (..))
 import qualified Vulkan.Core10.FundamentalTypes as Extent2D (Extent2D (..))
+import qualified Vulkan.Core10.Queue as SubmitInfo (SubmitInfo (..))
+import Vulkan.Extensions.VK_KHR_swapchain
+import qualified Vulkan.Extensions.VK_KHR_swapchain as PresentInfoKHR (PresentInfoKHR (..))
 import Vulkan.Zero
 
 renderFrame :: (MonadResource m) => DeviceParams -> Frame -> m ()
@@ -22,8 +29,15 @@ renderFrame DeviceParams{..} f@Frame{..} = do
         SwapchainResources{..} = fSwapchainResources
         SwapchainInfo{..} = srInfo
 
-    -- TODO: set up semaphores
-    imageIndex <- undefined
+    -- Wait for previous frame to finish
+    _ <- waitForFences dpDevice [fInFlightFence] True maxBound
+    resetFences dpDevice [fInFlightFence]
+
+    -- Ensure the swapchain survives for the duration of the frame
+    resourceTRefCount srRelease
+    resourceTRefCount fReleaseFramebuffers 
+
+    (_, imageIndex) <- acquireNextImageKHRSafe dpDevice siSwapchain oneSecond fImageAvailableSemaphore NULL_HANDLE
 
     let commandBufferAllocateInfo =
             zero
@@ -31,8 +45,9 @@ renderFrame DeviceParams{..} f@Frame{..} = do
                 , level = COMMAND_BUFFER_LEVEL_PRIMARY
                 , commandBufferCount = 1
                 }
+    -- TODO: support multiple command buffers
     (_, ~[commandBuffer]) <- withCommandBuffers dpDevice commandBufferAllocateInfo allocate
-
+    resetCommandBuffer commandBuffer zero -- May be redundant, commandBuffer must be in the 'initial' state before recording
     let commandBufferBeginInfo =
             zero
                 { CommandBufferBeginInfo.flags = zero
@@ -42,7 +57,29 @@ renderFrame DeviceParams{..} f@Frame{..} = do
     useCommandBuffer commandBuffer commandBufferBeginInfo $
         myRecordCommandBuffer commandBuffer f imageIndex
 
-    undefined
+    let signalSemaphores = [fRenderFinishedSemaphore]
+        waitSemaphores = [fImageAvailableSemaphore]
+        submitInfo =
+            zero
+                { SubmitInfo.waitSemaphores = waitSemaphores
+                , waitDstStageMask = [PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT]
+                , commandBuffers = [commandBufferHandle commandBuffer]
+                , SubmitInfo.signalSemaphores = signalSemaphores
+                }
+                ::& ()
+    queueSubmit dpGraphicsQueue [SomeStruct submitInfo] fInFlightFence
+
+    let presentInfo =
+            zero
+                { PresentInfoKHR.waitSemaphores = signalSemaphores
+                , swapchains = [siSwapchain]
+                , imageIndices = [imageIndex]
+                -- , results = _
+                }
+    -- present the frame when the render is finished
+    _ <- queuePresentKHR dpPresentQueue presentInfo
+
+    return ()
 
 myRecordCommandBuffer :: (MonadIO m) => CommandBuffer -> Frame -> Word32 -> m ()
 myRecordCommandBuffer commandBuffer Frame{..} imageIndex = do
@@ -72,4 +109,5 @@ myRecordCommandBuffer commandBuffer Frame{..} imageIndex = do
             commandBuffer
             0
             [Rect2D{offset = Offset2D 0 0, extent = siImageExtent}]
+        cmdBindPipeline commandBuffer PIPELINE_BIND_POINT_GRAPHICS fPipeline
         cmdDraw commandBuffer 3 1 0 0
