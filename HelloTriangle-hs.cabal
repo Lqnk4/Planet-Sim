@@ -26,6 +26,7 @@ executable HelloTriangle-hs
                    Pipeline,
                    Frame,
                    Render,
+                   MonadVulkan,
     -- other-extensions:
     build-depends:    bytestring,
                       base ^>=4.18.3.0,

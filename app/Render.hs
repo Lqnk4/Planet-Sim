@@ -67,7 +67,7 @@ renderFrame DeviceParams{..} f@Frame{..} = do
                 , SubmitInfo.signalSemaphores = signalSemaphores
                 }
                 ::& ()
-    queueSubmit dpGraphicsQueue [SomeStruct submitInfo] fInFlightFence
+    queueSubmit (fst dpGraphicsQueue) [SomeStruct submitInfo] fInFlightFence
 
     let presentInfo =
             zero
@@ -77,7 +77,7 @@ renderFrame DeviceParams{..} f@Frame{..} = do
                 -- , results = _
                 }
     -- present the frame when the render is finished
-    void $ queuePresentKHR dpPresentQueue presentInfo
+    void $ queuePresentKHR (fst dpPresentQueue) presentInfo
 
 myRecordCommandBuffer :: (MonadIO m) => CommandBuffer -> Frame -> Word32 -> m ()
 myRecordCommandBuffer commandBuffer Frame{..} imageIndex = do

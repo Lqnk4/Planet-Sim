@@ -16,7 +16,7 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import GHC.Generics (Generic (..))
 import qualified Graphics.UI.GLFW as GLFW
-import Init (DeviceParams (..), sameGraphicsPresentQueues)
+import Init
 import RefCounted
 import Vulkan.Core10
 import qualified Vulkan.Core10 as ImageViewCreateInfo (ImageViewCreateInfo (..))
@@ -146,8 +146,8 @@ createSwapchain devParams@(DeviceParams{..}) oldSwapchain window surface = do
 
     let (imageSharingMode, queueFamilyIndices) =
             if sameGraphicsPresentQueues devParams
-                then (SHARING_MODE_EXCLUSIVE, [dpGraphicsQueueFamilyIndex])
-                else (SHARING_MODE_CONCURRENT, [dpGraphicsQueueFamilyIndex, dpPresentQueueFamilyIndex])
+                then (SHARING_MODE_EXCLUSIVE, [snd dpGraphicsQueue])
+                else (SHARING_MODE_CONCURRENT, [snd dpGraphicsQueue, snd dpPresentQueue])
 
     let swapchainCreateInfo =
             SwapchainCreateInfoKHR

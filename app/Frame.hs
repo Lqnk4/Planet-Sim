@@ -14,6 +14,7 @@ import Init
 import qualified Pipeline
 import RefCounted
 import Swapchain
+import MonadVulkan
 import Vulkan.CStruct.Extends
 import Vulkan.Core10 hiding (createCommandPool)
 import qualified Vulkan.Core10.CommandPool as CommandPoolCreateInfo (CommandPoolCreateInfo (..))
@@ -37,13 +38,6 @@ data Frame = Frame
     , fFramebuffers :: Vector Framebuffer
     , fReleaseFramebuffers :: RefCounted
     , fRecycledResources :: RecycledResources
-    }
-
-data RecycledResources = RecycledResources
-    { fImageAvailableSemaphore :: Semaphore
-    , fRenderFinishedSemaphore :: Semaphore
-    , fInFlightFence :: Fence
-    , fCommandPool :: CommandPool
     }
 
 initialRecycledResources :: (MonadResource m) => DeviceParams -> m RecycledResources
@@ -73,7 +67,7 @@ createCommandPool devParams = do
     let poolInfo =
             zero
                 { CommandPoolCreateInfo.flags = COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
-                , CommandPoolCreateInfo.queueFamilyIndex = dpGraphicsQueueFamilyIndex devParams
+                , CommandPoolCreateInfo.queueFamilyIndex = dpGraphicsQueueIndex devParams
                 }
     withCommandPool (dpDevice devParams) poolInfo Nothing allocate
 

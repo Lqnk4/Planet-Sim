@@ -2,6 +2,8 @@ module Init (
     Init.createInstance,
     Init.createDevice,
     DeviceParams (..),
+    dpGraphicsQueueIndex,
+    dpPresentQueueIndex,
     sameGraphicsPresentQueues,
 ) where
 
@@ -15,7 +17,6 @@ import Data.Bitraversable (bisequence)
 import Data.Bits
 import qualified Data.ByteString as BS
 import Data.List (nub)
-import Data.Text (Text)
 import qualified Data.Vector as V
 import Data.Word
 import Vulkan.CStruct.Extends
@@ -49,18 +50,21 @@ createInstance extraExtensions = do
             }
 
 data DeviceParams = DeviceParams
-    { dpDeviceName :: !Text
-    , dpPhysicalDevice :: !PhysicalDevice
+    { dpPhysicalDevice :: !PhysicalDevice
     , dpDevice :: !Device
-    , dpGraphicsQueue :: !Queue
-    , dpGraphicsQueueFamilyIndex :: !Word32
-    , dpPresentQueue :: !Queue
-    , dpPresentQueueFamilyIndex :: !Word32
+    , dpGraphicsQueue :: !(Queue, Word32)
+    , dpPresentQueue :: !(Queue, Word32)
     }
     deriving (Show, Eq)
 
+dpGraphicsQueueIndex :: DeviceParams -> Word32
+dpGraphicsQueueIndex = snd . dpGraphicsQueue
+
+dpPresentQueueIndex :: DeviceParams -> Word32
+dpPresentQueueIndex = snd . dpPresentQueue
+
 sameGraphicsPresentQueues :: DeviceParams -> Bool
-sameGraphicsPresentQueues = (==) <$> dpGraphicsQueueFamilyIndex <*> dpPresentQueueFamilyIndex
+sameGraphicsPresentQueues = (==) <$> dpGraphicsQueueIndex <*> dpPresentQueueIndex
 
 createDevice :: (MonadResource m, MonadThrow m) => Instance -> SurfaceKHR -> m DeviceParams
 createDevice inst surf = do
@@ -68,8 +72,7 @@ createDevice inst surf = do
         VkUtils.pickPhysicalDevice inst (physicalDeviceInfo surf) id >>= \case
             Nothing -> throw (AssertionFailed "Unable to find suitable physical device")
             Just x -> return x
-
-    devName <- VkUtils.physicalDeviceName phys
+    -- devName <- VkUtils.physicalDeviceName phys
     let graphicsQueueFamilyIndex = pdiGraphicsQueueFamilyIndex pdi
         presentQueueFamilyIndex = pdiPresentQueueFamilyIndex pdi
         uniqueQueueFamilyIndices = V.fromList $ nub [graphicsQueueFamilyIndex, presentQueueFamilyIndex]
@@ -85,7 +88,7 @@ createDevice inst surf = do
     graphicsQueue <- getDeviceQueue dev graphicsQueueFamilyIndex 0
     presentQueue <- getDeviceQueue dev presentQueueFamilyIndex 0
 
-    return $ DeviceParams devName phys dev graphicsQueue graphicsQueueFamilyIndex presentQueue presentQueueFamilyIndex
+    return $ DeviceParams phys dev (graphicsQueue, graphicsQueueFamilyIndex) (presentQueue, presentQueueFamilyIndex)
 
 deviceHasSwapchain :: (MonadIO m) => PhysicalDevice -> SurfaceKHR -> m Bool
 deviceHasSwapchain dev surf = do
@@ -112,7 +115,7 @@ instance Ord PhysicalDeviceInfo where
         compareDeviceType :: PhysicalDeviceType -> PhysicalDeviceType -> Ordering
         compareDeviceType t1 t2 = mapPriority t1 `compare` mapPriority t2
         mapPriority :: PhysicalDeviceType -> Int
-        mapPriority t = case t of
+        mapPriority = \case
             PHYSICAL_DEVICE_TYPE_DISCRETE_GPU -> 5
             PHYSICAL_DEVICE_TYPE_INTEGRATED_GPU -> 4
             PHYSICAL_DEVICE_TYPE_VIRTUAL_GPU -> 3
@@ -120,10 +123,7 @@ instance Ord PhysicalDeviceInfo where
             PHYSICAL_DEVICE_TYPE_OTHER -> 1
         sameGraphicsPresentQueues = (==) <$> pdiGraphicsQueueFamilyIndex <*> pdiPresentQueueFamilyIndex
 
-{- | Requires the device to have a graphics queue
-
-The graphics queue index will be able to present to the specified surface
--}
+-- | Requires the device to have a graphics and present queue
 physicalDeviceInfo ::
     (MonadIO m) => SurfaceKHR -> PhysicalDevice -> m (Maybe PhysicalDeviceInfo)
 physicalDeviceInfo surf phys = runMaybeT $ do
