@@ -24,8 +24,8 @@ import Vulkan.Core12
 import Vulkan.Extensions.VK_KHR_surface
 import Vulkan.Zero
 
-numConcurrentFrames :: Int
-numConcurrentFrames = 3
+maxFramesInFlight :: Int
+maxFramesInFlight = 2
 
 data Frame = Frame
     { fIndex :: Word64

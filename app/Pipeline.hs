@@ -5,6 +5,7 @@ module Pipeline (
 
 import qualified Vulkan.Extensions.VK_KHR_surface as SurfaceFormatKHR (SurfaceFormatKHR (..))
 
+import Control.Exception
 import Control.Monad.Trans.Resource
 import Data.Bits
 import Data.Foldable
@@ -127,11 +128,19 @@ createPipeline dev swapchainInfo renderPass = do
                 , basePipelineHandle = NULL_HANDLE
                 , basePipelineIndex = -1
                 }
-    -- Ignore warning if only using a single pipeline
-    (key, (_, ~[graphicsPipelines])) <- withGraphicsPipelines dev NULL_HANDLE [SomeStruct pipelineInfo] Nothing allocate
+    (graphicsPipelinesKey, (_, graphicsPipelines)) <- withGraphicsPipelines dev NULL_HANDLE [SomeStruct pipelineInfo] Nothing allocate
+    -- We only support a single pipeline
+    let graphicsPipeline =
+            ( \case
+                Just pipeline -> pipeline
+                Nothing -> throw (AssertionFailed "Failed to create graphicsPipeline")
+            )
+                (graphicsPipelines V.!? 0)
+
     release pipelineLayoutKey
     traverse_ release shaderKeys
-    return (key, graphicsPipelines)
+
+    return (graphicsPipelinesKey, graphicsPipeline)
 
 createRenderPass :: (MonadResource m) => Device -> SwapchainInfo -> m (ReleaseKey, RenderPass)
 createRenderPass dev swapchainInfo = do

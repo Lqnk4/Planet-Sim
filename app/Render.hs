@@ -21,6 +21,7 @@ import qualified Vulkan.Core10.Queue as SubmitInfo (SubmitInfo (..))
 import Vulkan.Extensions.VK_KHR_swapchain
 import qualified Vulkan.Extensions.VK_KHR_swapchain as PresentInfoKHR (PresentInfoKHR (..))
 import Vulkan.Zero
+import Control.Monad
 
 renderFrame :: (MonadResource m) => DeviceParams -> Frame -> m ()
 renderFrame DeviceParams{..} f@Frame{..} = do
@@ -35,7 +36,7 @@ renderFrame DeviceParams{..} f@Frame{..} = do
 
     -- Ensure the swapchain survives for the duration of the frame
     resourceTRefCount srRelease
-    resourceTRefCount fReleaseFramebuffers 
+    resourceTRefCount fReleaseFramebuffers
 
     (_, imageIndex) <- acquireNextImageKHRSafe dpDevice siSwapchain oneSecond fImageAvailableSemaphore NULL_HANDLE
 
@@ -45,17 +46,16 @@ renderFrame DeviceParams{..} f@Frame{..} = do
                 , level = COMMAND_BUFFER_LEVEL_PRIMARY
                 , commandBufferCount = 1
                 }
-    -- TODO: support multiple command buffers
-    (_, ~[commandBuffer]) <- withCommandBuffers dpDevice commandBufferAllocateInfo allocate
-    resetCommandBuffer commandBuffer zero -- May be redundant, commandBuffer must be in the 'initial' state before recording
+    (_, commandBuffers) <- withCommandBuffers dpDevice commandBufferAllocateInfo allocate
+    V.mapM_ (`resetCommandBuffer` zero) commandBuffers -- May be redundant, commandBuffer must be in the 'initial' state before recording
     let commandBufferBeginInfo =
             zero
                 { CommandBufferBeginInfo.flags = zero
                 , inheritanceInfo = Nothing
                 }
 
-    useCommandBuffer commandBuffer commandBufferBeginInfo $
-        myRecordCommandBuffer commandBuffer f imageIndex
+    V.forM_ commandBuffers (\commandBuffer -> useCommandBuffer commandBuffer commandBufferBeginInfo $
+        myRecordCommandBuffer commandBuffer f imageIndex)
 
     let signalSemaphores = [fRenderFinishedSemaphore]
         waitSemaphores = [fImageAvailableSemaphore]
@@ -63,7 +63,7 @@ renderFrame DeviceParams{..} f@Frame{..} = do
             zero
                 { SubmitInfo.waitSemaphores = waitSemaphores
                 , waitDstStageMask = [PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT]
-                , commandBuffers = [commandBufferHandle commandBuffer]
+                , commandBuffers = V.map commandBufferHandle commandBuffers
                 , SubmitInfo.signalSemaphores = signalSemaphores
                 }
                 ::& ()
@@ -77,9 +77,7 @@ renderFrame DeviceParams{..} f@Frame{..} = do
                 -- , results = _
                 }
     -- present the frame when the render is finished
-    _ <- queuePresentKHR dpPresentQueue presentInfo
-
-    return ()
+    void $ queuePresentKHR dpPresentQueue presentInfo
 
 myRecordCommandBuffer :: (MonadIO m) => CommandBuffer -> Frame -> Word32 -> m ()
 myRecordCommandBuffer commandBuffer Frame{..} imageIndex = do
