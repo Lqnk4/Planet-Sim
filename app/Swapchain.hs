@@ -4,11 +4,13 @@ module Swapchain (
     SwapchainInfo (..),
     SwapchainResources (..),
     allocSwapchainResources,
-    recreateSwapchainResources
+    recreateSwapchainResources,
 ) where
 
 import Control.Exception
+import Control.Monad.IO.Class
 import Control.Monad.Trans.Resource
+import Data.Bifunctor
 import Data.Bits
 import Data.Either ()
 import Data.Foldable
@@ -16,7 +18,7 @@ import Data.Vector (Vector)
 import qualified Data.Vector as V
 import GHC.Generics (Generic (..))
 import qualified Graphics.UI.GLFW as GLFW
-import Init
+import MonadVulkan
 import RefCounted
 import Vulkan.Core10
 import qualified Vulkan.Core10 as ImageViewCreateInfo (ImageViewCreateInfo (..))
@@ -26,8 +28,6 @@ import qualified Vulkan.Extensions.VK_KHR_surface as SurfaceCapabilitiesKHR (Sur
 import qualified Vulkan.Extensions.VK_KHR_surface as SurfaceFormatKHR (SurfaceFormatKHR (..))
 import Vulkan.Extensions.VK_KHR_swapchain
 import Vulkan.Zero
-import Data.Bifunctor
-import Control.Monad.IO.Class
 
 data SwapchainInfo = SwapchainInfo
     { siSwapchain :: SwapchainKHR
@@ -49,15 +49,15 @@ data SwapchainResources = SwapchainResources
 
 allocSwapchainResources ::
     (MonadResource m) =>
-    DeviceParams ->
+    GlobalHandles ->
     -- | Previous swapchain, can be NULL_HANDLE
     SwapchainKHR ->
     GLFW.Window ->
     SurfaceKHR ->
     m SwapchainResources
-allocSwapchainResources devParams@(DeviceParams{..}) oldSwapchain  window surface = do
-    srInfo@SwapchainInfo{..} <- createSwapchain devParams oldSwapchain window surface
-    (_, srImages) <- getSwapchainImagesKHR dpDevice siSwapchain
+allocSwapchainResources gh@GlobalHandles{..} oldSwapchain window surface = do
+    srInfo@SwapchainInfo{..} <- createSwapchain gh oldSwapchain window surface
+    (_, srImages) <- getSwapchainImagesKHR ghDevice siSwapchain
 
     (imageViewKeys, srImageViews) <- fmap V.unzip . V.forM srImages $ \image -> do
         let imageCreateInfo image =
@@ -81,7 +81,7 @@ allocSwapchainResources devParams@(DeviceParams{..}) oldSwapchain  window surfac
                             , layerCount = 1
                             }
                     }
-        withImageView dpDevice (imageCreateInfo image) Nothing allocate
+        withImageView ghDevice (imageCreateInfo image) Nothing allocate
 
     -- This refcount is released in 'recreateSwapchainResources'
     srRelease <- newRefCounted $ do
@@ -92,29 +92,29 @@ allocSwapchainResources devParams@(DeviceParams{..}) oldSwapchain  window surfac
 
 recreateSwapchainResources ::
     (MonadResource m) =>
+    GlobalHandles ->
     GLFW.Window ->
     SwapchainResources ->
-    DeviceParams ->
     m SwapchainResources
-recreateSwapchainResources window oldResources devParams = do
+recreateSwapchainResources gh window oldResources = do
     let oldSwapchain = siSwapchain . srInfo $ oldResources
         oldSurface = siSurface . srInfo $ oldResources
-    r <- allocSwapchainResources devParams oldSwapchain window oldSurface
+    r <- allocSwapchainResources gh oldSwapchain window oldSurface
     releaseRefCounted (srRelease oldResources)
     return r
 
 createSwapchain ::
     (MonadResource m) =>
-    DeviceParams ->
+    GlobalHandles ->
     -- | old swapchain, can be NULL_HANDLE
     SwapchainKHR ->
     GLFW.Window ->
     SurfaceKHR ->
     m SwapchainInfo
-createSwapchain devParams@(DeviceParams{..}) oldSwapchain window surface = do
-    surfaceCaps <- getPhysicalDeviceSurfaceCapabilitiesKHR dpPhysicalDevice surface
-    (_, availableFormats) <- getPhysicalDeviceSurfaceFormatsKHR dpPhysicalDevice surface
-    (_, availablePresentModes) <- getPhysicalDeviceSurfacePresentModesKHR dpPhysicalDevice surface
+createSwapchain gh@GlobalHandles{..} oldSwapchain window surface = do
+    surfaceCaps <- getPhysicalDeviceSurfaceCapabilitiesKHR ghPhysicalDevice surface
+    (_, availableFormats) <- getPhysicalDeviceSurfaceFormatsKHR ghPhysicalDevice surface
+    (_, availablePresentModes) <- getPhysicalDeviceSurfacePresentModesKHR ghPhysicalDevice surface
 
     surfaceFormat <- chooseSurfaceFormat availableFormats
 
@@ -145,9 +145,9 @@ createSwapchain devParams@(DeviceParams{..}) oldSwapchain window surface = do
                 min limit desired
 
     let (imageSharingMode, queueFamilyIndices) =
-            if sameGraphicsPresentQueues devParams
-                then (SHARING_MODE_EXCLUSIVE, [snd dpGraphicsQueue])
-                else (SHARING_MODE_CONCURRENT, [snd dpGraphicsQueue, snd dpPresentQueue])
+            if sameGraphicsPresentQueues gh
+                then (SHARING_MODE_EXCLUSIVE, [snd ghGraphicsQueue])
+                else (SHARING_MODE_CONCURRENT, [snd ghGraphicsQueue, snd ghPresentQueue])
 
     let swapchainCreateInfo =
             SwapchainCreateInfoKHR
@@ -169,7 +169,7 @@ createSwapchain devParams@(DeviceParams{..}) oldSwapchain window surface = do
                 , oldSwapchain = oldSwapchain
                 }
 
-    (releaseKey, swapchain) <- withSwapchainKHR dpDevice swapchainCreateInfo Nothing allocate
+    (releaseKey, swapchain) <- withSwapchainKHR ghDevice swapchainCreateInfo Nothing allocate
 
     return $ SwapchainInfo swapchain releaseKey presentMode surfaceFormat imageExtent surface
 

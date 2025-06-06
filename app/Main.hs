@@ -11,6 +11,7 @@ import Window
 
 import Frame (initialFrame)
 import qualified Graphics.UI.GLFW as GLFW
+import MonadVulkan
 import Render (renderFrame)
 import Vulkan.Core10
 
@@ -33,9 +34,10 @@ main = runResourceT $ do
 
     inst <- Init.createInstance glfwExtensions
     (_, surface) <- createSurface inst window
-    devParams <- Init.createDevice inst surface
+    devParams@Init.DeviceParams{..} <- Init.createDevice inst surface
+    globalHandles <- initGlobalHandles inst dpPhysicalDevice dpDevice dpGraphicsQueue dpPresentQueue
 
-    firstFrame <- initialFrame devParams window surface
+    firstFrame <- initialFrame globalHandles window surface
 
     mainloop window $ do
         liftIO GLFW.pollEvents

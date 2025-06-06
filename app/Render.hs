@@ -4,6 +4,7 @@ module Render (
     renderFrame,
 ) where
 
+import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Resource
 import qualified Data.Vector as V
@@ -21,7 +22,6 @@ import qualified Vulkan.Core10.Queue as SubmitInfo (SubmitInfo (..))
 import Vulkan.Extensions.VK_KHR_swapchain
 import qualified Vulkan.Extensions.VK_KHR_swapchain as PresentInfoKHR (PresentInfoKHR (..))
 import Vulkan.Zero
-import Control.Monad
 
 renderFrame :: (MonadResource m) => DeviceParams -> Frame -> m ()
 renderFrame DeviceParams{..} f@Frame{..} = do
@@ -54,8 +54,12 @@ renderFrame DeviceParams{..} f@Frame{..} = do
                 , inheritanceInfo = Nothing
                 }
 
-    V.forM_ commandBuffers (\commandBuffer -> useCommandBuffer commandBuffer commandBufferBeginInfo $
-        myRecordCommandBuffer commandBuffer f imageIndex)
+    V.forM_
+        commandBuffers
+        ( \commandBuffer ->
+            useCommandBuffer commandBuffer commandBufferBeginInfo $
+                myRecordCommandBuffer commandBuffer f imageIndex
+        )
 
     let signalSemaphores = [fRenderFinishedSemaphore]
         waitSemaphores = [fImageAvailableSemaphore]

@@ -2,9 +2,6 @@ module Init (
     Init.createInstance,
     Init.createDevice,
     DeviceParams (..),
-    dpGraphicsQueueIndex,
-    dpPresentQueueIndex,
-    sameGraphicsPresentQueues,
 ) where
 
 import Control.Applicative ((<|>))
@@ -56,15 +53,6 @@ data DeviceParams = DeviceParams
     , dpPresentQueue :: !(Queue, Word32)
     }
     deriving (Show, Eq)
-
-dpGraphicsQueueIndex :: DeviceParams -> Word32
-dpGraphicsQueueIndex = snd . dpGraphicsQueue
-
-dpPresentQueueIndex :: DeviceParams -> Word32
-dpPresentQueueIndex = snd . dpPresentQueue
-
-sameGraphicsPresentQueues :: DeviceParams -> Bool
-sameGraphicsPresentQueues = (==) <$> dpGraphicsQueueIndex <*> dpPresentQueueIndex
 
 createDevice :: (MonadResource m, MonadThrow m) => Instance -> SurfaceKHR -> m DeviceParams
 createDevice inst surf = do
