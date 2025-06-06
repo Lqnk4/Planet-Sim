@@ -39,6 +39,7 @@ executable HelloTriangle-hs
                       resourcet ^>=1.3.0,
                       GLFW-b ^>=3.3.9.1,
                       unagi-chan,
+                      unliftio,
     hs-source-dirs:   app
     default-language: Haskell2010
     default-extensions: OverloadedStrings, 

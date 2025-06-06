@@ -1,6 +1,5 @@
 module Main where
 
-import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Resource
 
@@ -9,11 +8,13 @@ import qualified Data.ByteString as BS
 import qualified Init
 import Window
 
-import Frame (initialFrame)
+import Frame
 import qualified Graphics.UI.GLFW as GLFW
 import MonadVulkan
-import Render (renderFrame)
-import Vulkan.Core10
+import Render
+import Swapchain
+import Vulkan.Core10.Queue
+import Data.Maybe
 
 main :: IO ()
 main = runResourceT $ do
@@ -34,20 +35,36 @@ main = runResourceT $ do
 
     inst <- Init.createInstance glfwExtensions
     (_, surface) <- createSurface inst window
-    devParams@Init.DeviceParams{..} <- Init.createDevice inst surface
+    Init.DeviceParams{..} <- Init.createDevice inst surface
     globalHandles <- initGlobalHandles inst dpPhysicalDevice dpDevice dpGraphicsQueue dpPresentQueue
 
-    firstFrame <- initialFrame globalHandles window surface
+    startTime <- liftIO $ fromJust <$> GLFW.getTime
+    let reportFPS f = do
+            endTime <- liftIO $ fromJust <$> GLFW.getTime
+            let frames = fIndex f
+                mean = realToFrac frames / (endTime - startTime)
+            liftIO $ putStrLn $ "Average FPS: " ++ show mean
 
-    mainloop window $ do
-        liftIO GLFW.pollEvents
-        liftIO $ GLFW.swapBuffers window
-        renderFrame devParams firstFrame
-    deviceWaitIdle (Init.dpDevice devParams)
+    let frame f = liftIO $ do
+            GLFW.windowShouldClose window >>= \case
+                True -> do
+                    return Nothing
+                False ->
+                    fmap Just $ do
+                            liftIO GLFW.pollEvents
+                            liftIO $ GLFW.swapBuffers window
+                            reportFPS f
+                            -- frame local resources
+                            runResourceT $ do
+                                needsNewSwapchain <- threwSwapchainError (runFrame globalHandles f (renderFrame globalHandles))
+                                advanceFrame globalHandles needsNewSwapchain f
 
-mainloop :: (MonadIO m) => GLFW.Window -> m () -> m ()
-mainloop window draw = do
-    shouldClose <- liftIO $ GLFW.windowShouldClose window
-    unless shouldClose $ do
-        draw
-        mainloop window draw
+    initial <- initialFrame globalHandles window surface
+    mainLoop frame initial
+    deviceWaitIdle (ghDevice globalHandles) -- Wait to cleanup resources
+
+mainLoop :: (Monad m) => (a -> m (Maybe a)) -> a -> m ()
+mainLoop f x =
+    f x >>= \case
+        Nothing -> return ()
+        Just x' -> mainLoop f x'

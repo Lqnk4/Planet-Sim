@@ -5,14 +5,14 @@ module Swapchain (
     SwapchainResources (..),
     allocSwapchainResources,
     recreateSwapchainResources,
+    threwSwapchainError,
 ) where
 
-import Control.Exception
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Resource
 import Data.Bifunctor
 import Data.Bits
-import Data.Either ()
+import Data.Either (isLeft)
 import Data.Foldable
 import Data.Vector (Vector)
 import qualified Data.Vector as V
@@ -22,12 +22,13 @@ import MonadVulkan
 import RefCounted
 import Vulkan.Core10
 import qualified Vulkan.Core10 as ImageViewCreateInfo (ImageViewCreateInfo (..))
-import Vulkan.Exception ()
+import Vulkan.Exception (VulkanException (..))
 import Vulkan.Extensions.VK_KHR_surface
 import qualified Vulkan.Extensions.VK_KHR_surface as SurfaceCapabilitiesKHR (SurfaceCapabilitiesKHR (..))
 import qualified Vulkan.Extensions.VK_KHR_surface as SurfaceFormatKHR (SurfaceFormatKHR (..))
 import Vulkan.Extensions.VK_KHR_swapchain
 import Vulkan.Zero
+import UnliftIO.Exception
 
 data SwapchainInfo = SwapchainInfo
     { siSwapchain :: SwapchainKHR
@@ -176,13 +177,23 @@ createSwapchain gh@GlobalHandles{..} oldSwapchain window surface = do
 chooseSurfaceFormat :: (MonadResource m) => Vector SurfaceFormatKHR -> m SurfaceFormatKHR
 chooseSurfaceFormat formats = do
     let best = V.find (\surfaceFormat -> SurfaceFormatKHR.format surfaceFormat == FORMAT_B8G8R8A8_SRGB && colorSpace surfaceFormat == COLOR_SPACE_SRGB_NONLINEAR_KHR) formats
-    return $ case best of
-        (Just surfaceFormat) -> surfaceFormat
-        Nothing -> throw $ AssertionFailed "Could not find suitable surface format"
+    case best of
+        (Just surfaceFormat) -> return surfaceFormat
+        -- Nothing -> throw $ AssertionFailed "Could not find suitable surface format"
+        Nothing -> throwString "Could not find suitable surface format"
 
 --
 -- Utils
 --
+
+threwSwapchainError :: (MonadUnliftIO m) => m b -> m Bool
+threwSwapchainError = fmap isLeft . tryJust swapchainError
+  where
+    swapchainError = \case
+        VulkanException e@ERROR_OUT_OF_DATE_KHR -> Just e
+        -- TODO handle this case
+        -- VulkanException e@ERROR_SURFACE_LOST_KHR -> Just e
+        VulkanException _ -> Nothing
 
 -- infixl 4 .&&.
 -- (.&&.) :: (Bits a) => a -> a -> Bool

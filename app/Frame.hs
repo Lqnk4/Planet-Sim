@@ -1,11 +1,16 @@
-{-# OPTIONS_GHC -Wno-unrecognised-pragmas #-}
+{-# LANGUAGE NamedFieldPuns #-}
+{-# LANGUAGE NumDecimals #-}
 
 module Frame (
     Frame (..),
     RecycledResources (..),
     initialFrame,
+    advanceFrame,
+    runFrame,
 ) where
 
+import Control.Monad
+import Control.Monad.IO.Class
 import Control.Monad.Trans.Resource
 import Data.Foldable
 import Data.Vector (Vector)
@@ -16,6 +21,7 @@ import MonadVulkan
 import qualified Pipeline
 import RefCounted
 import Swapchain
+import UnliftIO.Exception
 import Vulkan.CStruct.Extends
 import Vulkan.Core10 hiding (createCommandPool)
 import qualified Vulkan.Core10.CommandPool as CommandPoolCreateInfo (CommandPoolCreateInfo (..))
@@ -26,8 +32,8 @@ import Vulkan.Core12
 import Vulkan.Extensions.VK_KHR_surface
 import Vulkan.Zero
 
--- maxFramesInFlight :: Int
--- maxFramesInFlight = 2
+maxFramesInFlight :: Int
+maxFramesInFlight = 2
 
 data Frame = Frame
     { fIndex :: Word64
@@ -40,6 +46,15 @@ data Frame = Frame
     , fReleaseFramebuffers :: RefCounted
     , fRecycledResources :: RecycledResources
     }
+
+runFrame :: (MonadUnliftIO m, MonadResource m) => GlobalHandles -> Frame -> (Frame -> m a) -> m a
+runFrame GlobalHandles{..} f@Frame{..} r =
+    r f `finally` do
+        let oneSecond = 1.0e9
+        spawn_ $ do
+            _ <- waitForFences ghDevice [fInFlightFence fRecycledResources] True oneSecond
+            resetCommandPool ghDevice (fCommandPool fRecycledResources) COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT
+            liftIO $ ghRecycleBin fRecycledResources
 
 initialRecycledResources :: (MonadResource m) => GlobalHandles -> m RecycledResources
 initialRecycledResources gh@GlobalHandles{..} = do
@@ -60,8 +75,44 @@ initialFrame gh@GlobalHandles{..} fWindow fSurface = do
     (_, fRenderPass) <- Pipeline.createRenderPass ghDevice (srInfo fSwapchainResources)
     (fReleaseFramebuffers, fFramebuffers) <- createFramebuffers gh fRenderPass fSwapchainResources
     (_, fPipeline) <- Pipeline.createPipeline ghDevice (srInfo fSwapchainResources) fRenderPass
+
+    replicateM_ (maxFramesInFlight - 1) $ liftIO . ghRecycleBin =<< initialRecycledResources gh
     fRecycledResources <- initialRecycledResources gh
+
     return Frame{..}
+
+advanceFrame :: (MonadResource m, MonadIO m, MonadThrow m) => GlobalHandles -> Bool -> Frame -> m Frame
+advanceFrame gh needsNewSwapchain f = do
+    -- steal resources from prior frame
+    let nib = ghRecycleNib gh
+    fRecycledResources <-
+        liftIO $
+            nib >>= \case
+                Left block -> block
+                Right rs -> pure rs
+    (fSwapchainResources, fFramebuffers, fReleaseFramebuffers) <-
+        if needsNewSwapchain
+            then do
+                swapchainResources <- recreateSwapchainResources gh (fWindow f) (fSwapchainResources f)
+                unless
+                    (siSurfaceFormat (srInfo swapchainResources) == siSurfaceFormat (srInfo (fSwapchainResources f)))
+                    $ throwString "TODO: Handle swapchain changing formats"
+                releaseRefCounted (fReleaseFramebuffers f)
+                (releaseFramebuffers, framebuffers) <- createFramebuffers gh (fRenderPass f) swapchainResources
+                return (swapchainResources, framebuffers, releaseFramebuffers)
+            else return (fSwapchainResources f, fFramebuffers f, fReleaseFramebuffers f)
+    return
+        Frame
+            { fIndex = succ (fIndex f)
+            , fWindow = fWindow f
+            , fSurface = fSurface f
+            , fSwapchainResources
+            , fPipeline = fPipeline f
+            , fRenderPass = fRenderPass f
+            , fFramebuffers
+            , fReleaseFramebuffers
+            , fRecycledResources
+            }
 
 createCommandPool :: (MonadResource m) => GlobalHandles -> m (ReleaseKey, CommandPool)
 createCommandPool GlobalHandles{..} = do

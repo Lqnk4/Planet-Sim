@@ -1,6 +1,6 @@
 module Init (
-    Init.createInstance,
-    Init.createDevice,
+    createInstance,
+    createDevice,
     DeviceParams (..),
 ) where
 
@@ -17,7 +17,7 @@ import Data.List (nub)
 import qualified Data.Vector as V
 import Data.Word
 import Vulkan.CStruct.Extends
-import Vulkan.Core10
+import Vulkan.Core10 hiding (createInstance, createDevice)
 import qualified Vulkan.Core10 as ApplicationInfo (ApplicationInfo (..))
 import qualified Vulkan.Core10 as DeviceCreateInfo (DeviceCreateInfo (..))
 import qualified Vulkan.Core10 as DeviceQueueCreateInfo (DeviceQueueCreateInfo (..))

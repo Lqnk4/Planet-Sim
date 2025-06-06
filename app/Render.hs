@@ -10,9 +10,11 @@ import Control.Monad.Trans.Resource
 import qualified Data.Vector as V
 import Data.Word
 import Frame
-import Init
+import GHC.IO.Exception (IOErrorType (TimeExpired), IOException (..))
+import MonadVulkan
 import RefCounted
 import Swapchain
+import UnliftIO.Exception
 import Vulkan.CStruct.Extends
 import Vulkan.Core10
 import qualified Vulkan.Core10.CommandBuffer as CommandBufferBeginInfo (CommandBufferBeginInfo (..))
@@ -23,22 +25,28 @@ import Vulkan.Extensions.VK_KHR_swapchain
 import qualified Vulkan.Extensions.VK_KHR_swapchain as PresentInfoKHR (PresentInfoKHR (..))
 import Vulkan.Zero
 
-renderFrame :: (MonadResource m) => DeviceParams -> Frame -> m ()
-renderFrame DeviceParams{..} f@Frame{..} = do
+renderFrame :: (MonadResource m, MonadIO m) => GlobalHandles -> Frame -> m ()
+renderFrame GlobalHandles{..} f@Frame{..} = do
     let RecycledResources{..} = fRecycledResources
         oneSecond = 1.0e9 :: Word64
         SwapchainResources{..} = fSwapchainResources
         SwapchainInfo{..} = srInfo
 
     -- Wait for previous frame to finish
-    _ <- waitForFences dpDevice [fInFlightFence] True maxBound
-    resetFences dpDevice [fInFlightFence]
+    _ <- waitForFences ghDevice [fInFlightFence] True maxBound
+    resetFences ghDevice [fInFlightFence]
 
     -- Ensure the swapchain survives for the duration of the frame
     resourceTRefCount srRelease
     resourceTRefCount fReleaseFramebuffers
 
-    (_, imageIndex) <- acquireNextImageKHRSafe dpDevice siSwapchain oneSecond fImageAvailableSemaphore NULL_HANDLE
+    imageIndex <-
+        acquireNextImageKHRSafe ghDevice siSwapchain oneSecond fImageAvailableSemaphore NULL_HANDLE
+            >>= \case
+                (SUCCESS, imageIndex) -> return imageIndex
+                (TIMEOUT, _) ->
+                    timeoutError $ "Timed out (" ++ show (oneSecond `div` 1.0e9) ++ "s) trying to aquire next Image"
+                _ -> throwString "Unexpected Result from acquireNextImageKHR"
 
     let commandBufferAllocateInfo =
             zero
@@ -46,7 +54,7 @@ renderFrame DeviceParams{..} f@Frame{..} = do
                 , level = COMMAND_BUFFER_LEVEL_PRIMARY
                 , commandBufferCount = 1
                 }
-    (_, commandBuffers) <- withCommandBuffers dpDevice commandBufferAllocateInfo allocate
+    (_, commandBuffers) <- withCommandBuffers ghDevice commandBufferAllocateInfo allocate
     V.mapM_ (`resetCommandBuffer` zero) commandBuffers -- May be redundant, commandBuffer must be in the 'initial' state before recording
     let commandBufferBeginInfo =
             zero
@@ -71,7 +79,7 @@ renderFrame DeviceParams{..} f@Frame{..} = do
                 , SubmitInfo.signalSemaphores = signalSemaphores
                 }
                 ::& ()
-    queueSubmit (fst dpGraphicsQueue) [SomeStruct submitInfo] fInFlightFence
+    queueSubmit (fst ghGraphicsQueue) [SomeStruct submitInfo] fInFlightFence
 
     let presentInfo =
             zero
@@ -81,7 +89,7 @@ renderFrame DeviceParams{..} f@Frame{..} = do
                 -- , results = _
                 }
     -- present the frame when the render is finished
-    void $ queuePresentKHR (fst dpPresentQueue) presentInfo
+    void $ queuePresentKHR (fst ghPresentQueue) presentInfo
 
 myRecordCommandBuffer :: (MonadIO m) => CommandBuffer -> Frame -> Word32 -> m ()
 myRecordCommandBuffer commandBuffer Frame{..} imageIndex = do
@@ -113,3 +121,6 @@ myRecordCommandBuffer commandBuffer Frame{..} imageIndex = do
             [Rect2D{offset = Offset2D 0 0, extent = siImageExtent}]
         cmdBindPipeline commandBuffer PIPELINE_BIND_POINT_GRAPHICS fPipeline
         cmdDraw commandBuffer 3 1 0 0
+
+timeoutError :: (MonadIO m) => String -> m a
+timeoutError message = liftIO . throwIO $ IOError Nothing TimeExpired "" message Nothing Nothing

@@ -3,13 +3,17 @@ module MonadVulkan (
     RecycledResources (..),
     initGlobalHandles,
     sameGraphicsPresentQueues,
+    spawn_,
 ) where
 
 import Control.Concurrent.Chan.Unagi
+import Control.Concurrent.MVar
+import Control.Monad
+import Control.Monad.IO.Class
 import Control.Monad.Trans.Resource
 import Data.Word
+import UnliftIO (Async, asyncWithUnmask, mask, toIO, uninterruptibleCancel)
 import Vulkan.Core10
-import Control.Monad.IO.Class
 
 type QueueFamilyIndex = Word32
 
@@ -58,3 +62,27 @@ initGlobalHandles ghInstance ghPhysicalDevice ghDevice ghGraphicsQueue ghPresent
             (try, block) <- tryReadChan nib
             maybe (Left block) Right <$> tryRead try
     return GlobalHandles{..}
+
+-- Start an async thread which will be cancelled at the end of the ResourceT
+-- block
+spawn :: (MonadUnliftIO m, MonadResource m) => m a -> m (Async a)
+spawn a = do
+    aIO <- toIO a
+    -- If we don't remove the release key when the thread is done it'll leak,
+    -- remove it at the end of the async action when the thread is going to die
+    -- anyway.
+    --
+    -- Mask this so there's no chance we're inturrupted before writing the mvar.
+    kv <- liftIO newEmptyMVar
+    UnliftIO.mask $ \_ -> do
+        (k, r) <-
+            allocate
+                ( asyncWithUnmask
+                    (\unmask -> unmask $ aIO <* (unprotect =<< liftIO (readMVar kv)))
+                )
+                uninterruptibleCancel
+        liftIO $ putMVar kv k
+        pure r
+
+spawn_ :: (MonadUnliftIO m, MonadResource m) => m a -> m ()
+spawn_ = void . spawn
