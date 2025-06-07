@@ -5,7 +5,6 @@ module Init (
 ) where
 
 import Control.Applicative ((<|>))
-import Control.Exception
 import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Maybe
@@ -28,6 +27,7 @@ import Vulkan.Extensions.VK_KHR_swapchain
 import Vulkan.Requirement
 import qualified Vulkan.Utils.Initialization as VkUtils
 import Vulkan.Zero
+import UnliftIO.Exception
 
 myApiVersion :: Word32
 myApiVersion = API_VERSION_1_3
@@ -58,7 +58,7 @@ createDevice :: (MonadResource m, MonadThrow m) => Instance -> SurfaceKHR -> m D
 createDevice inst surf = do
     (pdi, phys) <-
         VkUtils.pickPhysicalDevice inst (physicalDeviceInfo surf) id >>= \case
-            Nothing -> throw (AssertionFailed "Unable to find suitable physical device")
+            Nothing -> throwString "Unable to find suitable physical device"
             Just x -> return x
     -- devName <- VkUtils.physicalDeviceName phys
     let graphicsQueueFamilyIndex = pdiGraphicsQueueFamilyIndex pdi

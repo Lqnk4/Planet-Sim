@@ -7,6 +7,7 @@ module Frame (
     initialFrame,
     advanceFrame,
     runFrame,
+    timeoutError,
 ) where
 
 import Control.Monad
@@ -16,6 +17,7 @@ import Data.Foldable
 import Data.Vector (Vector)
 import qualified Data.Vector as V
 import Data.Word
+import GHC.IO.Exception (IOErrorType (TimeExpired), IOException (..))
 import qualified Graphics.UI.GLFW as GLFW
 import MonadVulkan
 import qualified Pipeline
@@ -52,19 +54,29 @@ runFrame GlobalHandles{..} f@Frame{..} r =
     r f `finally` do
         let oneSecond = 1.0e9
         spawn_ $ do
-            _ <- waitForFences ghDevice [fInFlightFence fRecycledResources] True oneSecond
+            waitForFences ghDevice [fInFlightFence fRecycledResources] True oneSecond
+                >>= \case
+                    SUCCESS -> return ()
+                    TIMEOUT -> timeoutError $ "Timed out (" ++ show (oneSecond `div` 1.0e9) ++ "s) waiting for last frame to finish"
+                    _ -> throwString "Unexpected result from vkWaitForFences"
+
             resetCommandPool ghDevice (fCommandPool fRecycledResources) COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT
             liftIO $ ghRecycleBin fRecycledResources
 
 initialRecycledResources :: (MonadResource m) => GlobalHandles -> m RecycledResources
-initialRecycledResources gh@GlobalHandles{..} = do
+initialRecycledResources GlobalHandles{..} = do
     (_, fImageAvailableSemaphore) <-
         withSemaphore ghDevice (zero ::& SemaphoreTypeCreateInfo SEMAPHORE_TYPE_BINARY 0 :& ()) Nothing allocate
     (_, fRenderFinishedSemaphore) <-
         withSemaphore ghDevice (zero ::& SemaphoreTypeCreateInfo SEMAPHORE_TYPE_BINARY 0 :& ()) Nothing allocate
     (_, fInFlightFence) <-
         withFence ghDevice (zero{FenceCreateInfo.flags = FENCE_CREATE_SIGNALED_BIT} ::& ()) Nothing allocate
-    (_, fCommandPool) <- createCommandPool gh
+    let poolInfo =
+            zero
+                { CommandPoolCreateInfo.flags = COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
+                , CommandPoolCreateInfo.queueFamilyIndex = snd ghGraphicsQueue
+                }
+    (_, fCommandPool) <- withCommandPool ghDevice poolInfo Nothing allocate
     return RecycledResources{..}
 
 initialFrame :: (MonadResource m) => GlobalHandles -> GLFW.Window -> SurfaceKHR -> m Frame
@@ -93,7 +105,16 @@ advanceFrame gh needsNewSwapchain f = do
     (fSwapchainResources, fFramebuffers, fReleaseFramebuffers) <-
         if needsNewSwapchain
             then do
+                fbSize <- liftIO $ GLFW.getFramebufferSize (fWindow f)
+                let handleMinimization (width, height) = do
+                        when (width == 0 && height == 0) $ do
+                            (width', height') <- GLFW.getFramebufferSize (fWindow f)
+                            handleMinimization (width', height')
+                liftIO $ handleMinimization fbSize
+
+                deviceWaitIdle (ghDevice gh)
                 swapchainResources <- recreateSwapchainResources gh (fWindow f) (fSwapchainResources f)
+                liftIO $ putStrLn "Recreated Swapchain"
                 unless
                     (siSurfaceFormat (srInfo swapchainResources) == siSurfaceFormat (srInfo (fSwapchainResources f)))
                     $ throwString "TODO: Handle swapchain changing formats"
@@ -114,15 +135,6 @@ advanceFrame gh needsNewSwapchain f = do
             , fRecycledResources
             }
 
-createCommandPool :: (MonadResource m) => GlobalHandles -> m (ReleaseKey, CommandPool)
-createCommandPool GlobalHandles{..} = do
-    let poolInfo =
-            zero
-                { CommandPoolCreateInfo.flags = COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT
-                , CommandPoolCreateInfo.queueFamilyIndex = snd ghGraphicsQueue
-                }
-    withCommandPool ghDevice poolInfo Nothing allocate
-
 createFramebuffers :: (MonadResource m) => GlobalHandles -> RenderPass -> SwapchainResources -> m (RefCounted, Vector Framebuffer)
 createFramebuffers gh renderPass SwapchainResources{..} = do
     let SwapchainInfo{..} = srInfo
@@ -138,3 +150,6 @@ createFramebuffers gh renderPass SwapchainResources{..} = do
         withFramebuffer (ghDevice gh) (framebufferInfo imageView) Nothing allocate
     releaseFramebuffers <- newRefCounted (traverse_ release framebufferKeys)
     return (releaseFramebuffers, frameBuffers)
+
+timeoutError :: (MonadIO m) => String -> m a
+timeoutError message = liftIO . throwIO $ IOError Nothing TimeExpired "" message Nothing Nothing

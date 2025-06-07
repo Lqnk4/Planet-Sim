@@ -191,7 +191,7 @@ threwSwapchainError = fmap isLeft . tryJust swapchainError
   where
     swapchainError = \case
         VulkanException e@ERROR_OUT_OF_DATE_KHR -> Just e
-        -- TODO handle this case
+        -- TODO: handle this case
         -- VulkanException e@ERROR_SURFACE_LOST_KHR -> Just e
         VulkanException _ -> Nothing
 

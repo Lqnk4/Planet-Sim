@@ -10,7 +10,6 @@ import Control.Monad.Trans.Resource
 import qualified Data.Vector as V
 import Data.Word
 import Frame
-import GHC.IO.Exception (IOErrorType (TimeExpired), IOException (..))
 import MonadVulkan
 import RefCounted
 import Swapchain
@@ -24,6 +23,7 @@ import qualified Vulkan.Core10.Queue as SubmitInfo (SubmitInfo (..))
 import Vulkan.Extensions.VK_KHR_swapchain
 import qualified Vulkan.Extensions.VK_KHR_swapchain as PresentInfoKHR (PresentInfoKHR (..))
 import Vulkan.Zero
+import Vulkan.Exception
 
 renderFrame :: (MonadResource m, MonadIO m) => GlobalHandles -> Frame -> m ()
 renderFrame GlobalHandles{..} f@Frame{..} = do
@@ -34,7 +34,6 @@ renderFrame GlobalHandles{..} f@Frame{..} = do
 
     -- Wait for previous frame to finish
     _ <- waitForFences ghDevice [fInFlightFence] True maxBound
-    resetFences ghDevice [fInFlightFence]
 
     -- Ensure the swapchain survives for the duration of the frame
     resourceTRefCount srRelease
@@ -44,9 +43,15 @@ renderFrame GlobalHandles{..} f@Frame{..} = do
         acquireNextImageKHRSafe ghDevice siSwapchain oneSecond fImageAvailableSemaphore NULL_HANDLE
             >>= \case
                 (SUCCESS, imageIndex) -> return imageIndex
+                (SUBOPTIMAL_KHR, imageIndex) -> return imageIndex
                 (TIMEOUT, _) ->
                     timeoutError $ "Timed out (" ++ show (oneSecond `div` 1.0e9) ++ "s) trying to aquire next Image"
-                _ -> throwString "Unexpected Result from acquireNextImageKHR"
+                (e@ERROR_OUT_OF_DATE_KHR, _) ->
+                    throwIO $ VulkanException e
+                (e, _) -> throwString $ "Unexpected Result " ++ show e ++ "  from acquireNextImageKHR"
+
+    -- only reset fences if we are submitting work
+    resetFences ghDevice [fInFlightFence]
 
     let commandBufferAllocateInfo =
             zero
@@ -86,7 +91,6 @@ renderFrame GlobalHandles{..} f@Frame{..} = do
                 { PresentInfoKHR.waitSemaphores = signalSemaphores
                 , swapchains = [siSwapchain]
                 , imageIndices = [imageIndex]
-                -- , results = _
                 }
     -- present the frame when the render is finished
     void $ queuePresentKHR (fst ghPresentQueue) presentInfo
@@ -121,6 +125,3 @@ myRecordCommandBuffer commandBuffer Frame{..} imageIndex = do
             [Rect2D{offset = Offset2D 0 0, extent = siImageExtent}]
         cmdBindPipeline commandBuffer PIPELINE_BIND_POINT_GRAPHICS fPipeline
         cmdDraw commandBuffer 3 1 0 0
-
-timeoutError :: (MonadIO m) => String -> m a
-timeoutError message = liftIO . throwIO $ IOError Nothing TimeExpired "" message Nothing Nothing
