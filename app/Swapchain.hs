@@ -174,7 +174,7 @@ createSwapchain gh@GlobalHandles{..} oldSwapchain window surface = do
 
     return $ SwapchainInfo swapchain releaseKey presentMode surfaceFormat imageExtent surface
 
-chooseSurfaceFormat :: (MonadResource m) => Vector SurfaceFormatKHR -> m SurfaceFormatKHR
+chooseSurfaceFormat :: (MonadIO m) => Vector SurfaceFormatKHR -> m SurfaceFormatKHR
 chooseSurfaceFormat formats = do
     let best = V.find (\surfaceFormat -> SurfaceFormatKHR.format surfaceFormat == FORMAT_B8G8R8A8_SRGB && colorSpace surfaceFormat == COLOR_SPACE_SRGB_NONLINEAR_KHR) formats
     case best of
@@ -191,6 +191,7 @@ threwSwapchainError = fmap isLeft . tryJust swapchainError
   where
     swapchainError = \case
         VulkanException e@ERROR_OUT_OF_DATE_KHR -> Just e
+        VulkanException e@SUBOPTIMAL_KHR -> Just e
         -- TODO: handle this case
         -- VulkanException e@ERROR_SURFACE_LOST_KHR -> Just e
         VulkanException _ -> Nothing

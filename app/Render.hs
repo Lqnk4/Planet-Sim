@@ -44,8 +44,8 @@ renderFrame GlobalHandles{..} = do
                 (SUBOPTIMAL_KHR, imageIndex) -> return imageIndex
                 (TIMEOUT, _) ->
                     timeoutError $ "Timed out (" ++ show (oneSecond `div` 1.0e9) ++ "s) trying to aquire next Image"
-                (e@ERROR_OUT_OF_DATE_KHR, _) ->
-                    throwIO $ VulkanException e
+                -- (e@ERROR_OUT_OF_DATE_KHR, _) -> -- Failure results are automatically thrown by vulkan bindings
+                --     throwIO $ VulkanException e
                 (e, _) -> throwString $ "Unexpected Result " ++ show e ++ "  from acquireNextImageKHR"
 
     let commandBufferAllocateInfo =
@@ -89,7 +89,8 @@ renderFrame GlobalHandles{..} = do
                 , imageIndices = [imageIndex]
                 }
     -- present the frame when the render is finished
-    void $ queuePresentKHR (fst ghPresentQueue) presentInfo
+    _ <- queuePresentKHR (fst ghPresentQueue) presentInfo
+    return ()
 
 myRecordCommandBuffer :: (MonadIO m) => Frame -> Word32 -> CommandBuffer -> m ()
 myRecordCommandBuffer Frame{..} imageIndex commandBuffer = do

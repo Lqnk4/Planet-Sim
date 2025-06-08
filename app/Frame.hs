@@ -31,7 +31,7 @@ import RefCounted
 import Swapchain
 import UnliftIO
 import Vulkan.CStruct.Extends
-import Vulkan.Core10 
+import Vulkan.Core10
 import qualified Vulkan.Core10.CommandPool as CommandPoolCreateInfo (CommandPoolCreateInfo (..))
 import qualified Vulkan.Core10.FundamentalTypes as Extent2D (Extent2D (..))
 import qualified Vulkan.Core10.Pass as FramebufferCreateInfo (FramebufferCreateInfo (..))
@@ -94,7 +94,7 @@ queueSubmitFrame q ss sem value = do
     -- mask to not get interrupted between submitting the work and recording the wait
     mask $ \_ -> do
         queueSubmit q ss NULL_HANDLE
-        atomicModifyIORef' gpuWork ((, ()) . ((sem, value) :))
+        atomicModifyIORef' gpuWork ((,()) . ((sem, value) :))
 
 -- Runs a frame computation and spanws a thread to wait for GPU work to complete,
 -- then collects frame specific resources
@@ -177,7 +177,6 @@ advanceFrame gh needsNewSwapchain f = do
 
                 deviceWaitIdle (ghDevice gh)
                 swapchainResources <- recreateSwapchainResources gh (fWindow f) (fSwapchainResources f)
-                liftIO $ putStrLn "Recreated Swapchain"
                 unless
                     (siSurfaceFormat (srInfo swapchainResources) == siSurfaceFormat (srInfo (fSwapchainResources f)))
                     $ throwString "TODO: Handle swapchain changing formats"

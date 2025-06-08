@@ -33,8 +33,8 @@ main = runResourceT $ do
     (_, window) <- createGLFWWindow winWidth winHeight winTitle Nothing Nothing
     liftIO $ GLFW.makeContextCurrent (Just window)
 
-    -- (windowSizeCallback, windowSizeRef) <- makeWindowSizeCallback
-    -- liftIO $ GLFW.setWindowSizeCallback window windowSizeCallback
+    (windowSizeCallback, windowSizeRef) <- makeWindowSizeCallback
+    liftIO $ GLFW.setWindowSizeCallback window windowSizeCallback
 
     inst <- Init.createInstance glfwExtensions
     (_, surface) <- createSurface inst window
@@ -55,10 +55,11 @@ main = runResourceT $ do
                 False ->
                     fmap Just $ do
                         liftIO GLFW.pollEvents
-                        liftIO $ GLFW.swapBuffers window
-                        -- reportFPS f
-                        needsNewSwapchain <- threwSwapchainError $ runFrame globalHandles f (renderFrame globalHandles)
-                        advanceFrame globalHandles needsNewSwapchain f
+                        -- liftIO $ GLFW.swapBuffers window
+                        reportFPS f
+                        swapchainOutOfDate <- threwSwapchainError $ runFrame globalHandles f (renderFrame globalHandles)
+                        windowResized <- windowSizeRef
+                        advanceFrame globalHandles (swapchainOutOfDate || windowResized) f
 
     initial <- initialFrame globalHandles window surface
     mainLoop frame initial

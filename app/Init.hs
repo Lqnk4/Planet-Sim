@@ -72,7 +72,7 @@ createDevice inst surf = do
         requiredReqs = [U.reqs|
             1.2
             VK_KHR_swapchain
-            VK_KHR_timeline_semaphore
+            -- VK_KHR_timeline_semaphore
             PhysicalDeviceTimelineSemaphoreFeatures.timelineSemaphore
         |]
         optionalReqs = [U.reqs||]

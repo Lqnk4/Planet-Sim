@@ -50,7 +50,7 @@ createSurface inst window = do
 
 -- Fills an IORef with True on window resize
 -- On read, value is reset to False
-makeWindowSizeCallback :: (MonadIO m) => m (Maybe GLFW.WindowSizeCallback, IO Bool)
+makeWindowSizeCallback :: (MonadIO m) => m (Maybe GLFW.WindowSizeCallback, m Bool)
 makeWindowSizeCallback = do
     windowResizeRef <- newIORef False
     let windowSizeCallback _win _width _height = do
