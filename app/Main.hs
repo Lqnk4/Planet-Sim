@@ -53,13 +53,10 @@ main = runResourceT $ do
             liftIO (GLFW.windowShouldClose window) >>= \case
                 True -> return Nothing
                 False ->
-                    fmap Just $ runResourceT $ do
+                    fmap Just $ do
                         liftIO GLFW.pollEvents
                         liftIO $ GLFW.swapBuffers window
                         -- reportFPS f
-                        -- TODO: Test swapchain recreation explicitly
-                        -- I suspect the issue with swapchain recreation is that initialFrame lives in the outside resourceT
-                        -- \^^^ But new frames live in this internal resourceT
                         needsNewSwapchain <- threwSwapchainError $ runFrame globalHandles f (renderFrame globalHandles)
                         advanceFrame globalHandles needsNewSwapchain f
 

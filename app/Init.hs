@@ -15,19 +15,22 @@ import qualified Data.ByteString as BS
 import Data.List (nub)
 import qualified Data.Vector as V
 import Data.Word
+import UnliftIO.Exception
 import Vulkan.CStruct.Extends
-import Vulkan.Core10 hiding (createInstance, createDevice)
+import Vulkan.Core10 hiding (createDevice, createInstance)
 import qualified Vulkan.Core10 as ApplicationInfo (ApplicationInfo (..))
-import qualified Vulkan.Core10 as DeviceCreateInfo (DeviceCreateInfo (..))
 import qualified Vulkan.Core10 as DeviceQueueCreateInfo (DeviceQueueCreateInfo (..))
 import qualified Vulkan.Core10 as MemoryHeap (MemoryHeap (..))
+import Vulkan.Core12
 import Vulkan.Core13
+import Vulkan.Extensions.VK_KHR_get_physical_device_properties2
 import Vulkan.Extensions.VK_KHR_surface
 import Vulkan.Extensions.VK_KHR_swapchain
+import Vulkan.Extensions.VK_KHR_timeline_semaphore
 import Vulkan.Requirement
 import qualified Vulkan.Utils.Initialization as VkUtils
+import qualified Vulkan.Utils.Requirements.TH as U
 import Vulkan.Zero
-import UnliftIO.Exception
 
 myApiVersion :: Word32
 myApiVersion = API_VERSION_1_3
@@ -60,31 +63,41 @@ createDevice inst surf = do
         VkUtils.pickPhysicalDevice inst (physicalDeviceInfo surf) id >>= \case
             Nothing -> throwString "Unable to find suitable physical device"
             Just x -> return x
-    -- devName <- VkUtils.physicalDeviceName phys
     let graphicsQueueFamilyIndex = pdiGraphicsQueueFamilyIndex pdi
         presentQueueFamilyIndex = pdiPresentQueueFamilyIndex pdi
         uniqueQueueFamilyIndices = V.fromList $ nub [graphicsQueueFamilyIndex, presentQueueFamilyIndex]
-
         queueCreateInfos = V.map (\index -> SomeStruct zero{DeviceQueueCreateInfo.queueFamilyIndex = index, queuePriorities = [1]}) uniqueQueueFamilyIndices
-
         deviceCreateInfo =
-            zero
-                { queueCreateInfos = queueCreateInfos
-                , DeviceCreateInfo.enabledExtensionNames = [KHR_SWAPCHAIN_EXTENSION_NAME]
-                }
-    (_, dev) <- withDevice phys deviceCreateInfo Nothing allocate
+            zero{queueCreateInfos = queueCreateInfos}
+        requiredReqs = [U.reqs|
+            1.2
+            VK_KHR_swapchain
+            VK_KHR_timeline_semaphore
+            PhysicalDeviceTimelineSemaphoreFeatures.timelineSemaphore
+        |]
+        optionalReqs = [U.reqs||]
+
+    dev <- VkUtils.createDeviceFromRequirements requiredReqs optionalReqs phys deviceCreateInfo
     graphicsQueue <- getDeviceQueue dev graphicsQueueFamilyIndex 0
     presentQueue <- getDeviceQueue dev presentQueueFamilyIndex 0
 
     return $ DeviceParams phys dev (graphicsQueue, graphicsQueueFamilyIndex) (presentQueue, presentQueueFamilyIndex)
 
-deviceHasSwapchain :: (MonadIO m) => PhysicalDevice -> SurfaceKHR -> m Bool
-deviceHasSwapchain dev surf = do
+deviceHasSwapchain :: (MonadIO m) => PhysicalDevice -> m Bool
+deviceHasSwapchain dev = do
     (_, extensions) <- enumerateDeviceExtensionProperties dev Nothing
-    let hasSwapchain = V.any ((KHR_SWAPCHAIN_EXTENSION_NAME ==) . extensionName) extensions
-    formats <- getPhysicalDeviceSurfaceFormatsKHR dev surf
-    presentModes <- getPhysicalDeviceSurfacePresentModesKHR dev surf
-    return $ hasSwapchain && not (null formats) && not (null presentModes)
+    return $ V.any ((KHR_SWAPCHAIN_EXTENSION_NAME ==) . extensionName) extensions
+
+deviceHasTimelineSemaphores :: (MonadIO m) => PhysicalDevice -> m Bool
+deviceHasTimelineSemaphores phys = do
+    let hasExt = do
+            (_, extensions) <- enumerateDeviceExtensionProperties phys Nothing
+            return $ V.any ((KHR_TIMELINE_SEMAPHORE_EXTENSION_NAME ==) . extensionName) extensions
+        hasFeat = do
+            feats <- getPhysicalDeviceFeatures2KHR phys
+            let _ ::& (PhysicalDeviceTimelineSemaphoreFeatures hasTimelineSemaphores :& ()) = feats
+            return hasTimelineSemaphores
+    hasExt <&&> hasFeat
 
 data PhysicalDeviceInfo = PhysicalDeviceInfo
     { pdiDeviceType :: PhysicalDeviceType
@@ -116,7 +129,8 @@ physicalDeviceInfo ::
     (MonadIO m) => SurfaceKHR -> PhysicalDevice -> m (Maybe PhysicalDeviceInfo)
 physicalDeviceInfo surf phys = runMaybeT $ do
     -- We must be able to use the swapchain extension
-    guard =<< deviceHasSwapchain phys surf
+    guard =<< deviceHasSwapchain phys
+    guard =<< deviceHasTimelineSemaphores phys
 
     pdiDeviceType <- deviceType <$> getPhysicalDeviceProperties phys
 
@@ -157,3 +171,6 @@ x .&&. y = (/= zeroBits) (x .&. y)
 
 dupe :: a -> (a, a)
 dupe x = (x, x)
+
+(<&&>) :: (Applicative f) => f Bool -> f Bool -> f Bool
+(<&&>) = liftA2 (&&)

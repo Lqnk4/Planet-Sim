@@ -11,33 +11,31 @@ import qualified Data.Vector as V
 import Data.Word
 import Frame
 import MonadVulkan
-import RefCounted
 import Swapchain
 import UnliftIO.Exception
 import Vulkan.CStruct.Extends
 import Vulkan.Core10
+import Vulkan.Core12
 import qualified Vulkan.Core10.CommandBuffer as CommandBufferBeginInfo (CommandBufferBeginInfo (..))
 import qualified Vulkan.Core10.CommandBufferBuilding as RenderPassBeginInfo (RenderPassBeginInfo (..))
 import qualified Vulkan.Core10.FundamentalTypes as Extent2D (Extent2D (..))
 import qualified Vulkan.Core10.Queue as SubmitInfo (SubmitInfo (..))
+import Vulkan.Exception
 import Vulkan.Extensions.VK_KHR_swapchain
 import qualified Vulkan.Extensions.VK_KHR_swapchain as PresentInfoKHR (PresentInfoKHR (..))
 import Vulkan.Zero
-import Vulkan.Exception
 
-renderFrame :: (MonadResource m, MonadIO m) => GlobalHandles -> Frame -> m ()
-renderFrame GlobalHandles{..} f@Frame{..} = do
+renderFrame :: GlobalHandles -> F ()
+renderFrame GlobalHandles{..} = do
+    f@Frame{..} <- askFrame
     let RecycledResources{..} = fRecycledResources
         oneSecond = 1.0e9 :: Word64
         SwapchainResources{..} = fSwapchainResources
         SwapchainInfo{..} = srInfo
 
-    -- Wait for previous frame to finish
-    _ <- waitForFences ghDevice [fInFlightFence] True maxBound
-
     -- Ensure the swapchain survives for the duration of the frame
-    resourceTRefCount srRelease
-    resourceTRefCount fReleaseFramebuffers
+    frameRefCount srRelease
+    frameRefCount fReleaseFramebuffers
 
     imageIndex <-
         acquireNextImageKHRSafe ghDevice siSwapchain oneSecond fImageAvailableSemaphore NULL_HANDLE
@@ -50,9 +48,6 @@ renderFrame GlobalHandles{..} f@Frame{..} = do
                     throwIO $ VulkanException e
                 (e, _) -> throwString $ "Unexpected Result " ++ show e ++ "  from acquireNextImageKHR"
 
-    -- only reset fences if we are submitting work
-    resetFences ghDevice [fInFlightFence]
-
     let commandBufferAllocateInfo =
             zero
                 { commandPool = fCommandPool
@@ -63,40 +58,41 @@ renderFrame GlobalHandles{..} f@Frame{..} = do
     V.mapM_ (`resetCommandBuffer` zero) commandBuffers -- May be redundant, commandBuffer must be in the 'initial' state before recording
     let commandBufferBeginInfo =
             zero
-                { CommandBufferBeginInfo.flags = zero
+                { CommandBufferBeginInfo.flags = COMMAND_BUFFER_USAGE_ONE_TIME_SUBMIT_BIT
                 , inheritanceInfo = Nothing
                 }
-
     V.forM_
         commandBuffers
         ( \commandBuffer ->
             useCommandBuffer commandBuffer commandBufferBeginInfo $
-                myRecordCommandBuffer commandBuffer f imageIndex
+                myRecordCommandBuffer f imageIndex commandBuffer
         )
 
-    let signalSemaphores = [fRenderFinishedSemaphore]
-        waitSemaphores = [fImageAvailableSemaphore]
-        submitInfo =
+    let submitInfo =
             zero
-                { SubmitInfo.waitSemaphores = waitSemaphores
+                { SubmitInfo.waitSemaphores = [fImageAvailableSemaphore]
                 , waitDstStageMask = [PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT]
                 , commandBuffers = V.map commandBufferHandle commandBuffers
-                , SubmitInfo.signalSemaphores = signalSemaphores
+                , SubmitInfo.signalSemaphores = [fRenderFinishedSemaphore, fRenderFinishedHostSemaphore]
                 }
-                ::& ()
-    queueSubmit (fst ghGraphicsQueue) [SomeStruct submitInfo] fInFlightFence
+                ::& zero
+                    { waitSemaphoreValues = [1]
+                    , signalSemaphoreValues = [1, fIndex]
+                    }
+                :& ()
+    queueSubmitFrame (fst ghGraphicsQueue) [SomeStruct submitInfo] fRenderFinishedHostSemaphore fIndex
 
     let presentInfo =
             zero
-                { PresentInfoKHR.waitSemaphores = signalSemaphores
+                { PresentInfoKHR.waitSemaphores = [fRenderFinishedSemaphore]
                 , swapchains = [siSwapchain]
                 , imageIndices = [imageIndex]
                 }
     -- present the frame when the render is finished
     void $ queuePresentKHR (fst ghPresentQueue) presentInfo
 
-myRecordCommandBuffer :: (MonadIO m) => CommandBuffer -> Frame -> Word32 -> m ()
-myRecordCommandBuffer commandBuffer Frame{..} imageIndex = do
+myRecordCommandBuffer :: (MonadIO m) => Frame -> Word32 -> CommandBuffer -> m ()
+myRecordCommandBuffer Frame{..} imageIndex commandBuffer = do
     let SwapchainResources{..} = fSwapchainResources
         SwapchainInfo{..} = srInfo
         renderPassBeginInfo =

@@ -41,7 +41,6 @@ sameGraphicsPresentQueues = (==) <$> (snd . ghGraphicsQueue) <*> (snd . ghPresen
 data RecycledResources = RecycledResources
     { fImageAvailableSemaphore :: Semaphore
     , fRenderFinishedSemaphore :: Semaphore
-    , fInFlightFence :: Fence
     , fCommandPool :: CommandPool
     }
 
