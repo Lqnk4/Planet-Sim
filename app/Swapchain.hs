@@ -20,6 +20,7 @@ import GHC.Generics (Generic (..))
 import qualified Graphics.UI.GLFW as GLFW
 import MonadVulkan
 import RefCounted
+import UnliftIO.Exception
 import Vulkan.Core10
 import qualified Vulkan.Core10 as ImageViewCreateInfo (ImageViewCreateInfo (..))
 import Vulkan.Exception (VulkanException (..))
@@ -28,7 +29,6 @@ import qualified Vulkan.Extensions.VK_KHR_surface as SurfaceCapabilitiesKHR (Sur
 import qualified Vulkan.Extensions.VK_KHR_surface as SurfaceFormatKHR (SurfaceFormatKHR (..))
 import Vulkan.Extensions.VK_KHR_swapchain
 import Vulkan.Zero
-import UnliftIO.Exception
 
 data SwapchainInfo = SwapchainInfo
     { siSwapchain :: SwapchainKHR

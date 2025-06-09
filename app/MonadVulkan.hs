@@ -40,8 +40,12 @@ sameGraphicsPresentQueues = (==) <$> (snd . ghGraphicsQueue) <*> (snd . ghPresen
 
 data RecycledResources = RecycledResources
     { fImageAvailableSemaphore :: Semaphore
+    -- ^ A binary semaphore passed to 'acquireNextImageKHR'
     , fRenderFinishedSemaphore :: Semaphore
+    -- ^ A binary semaphore to synchronize rendering and presenting
     , fCommandPool :: CommandPool
+    -- ^ Pool for this frame's commands (might want more than one of these for
+    -- multithreaded recording)
     }
 
 initGlobalHandles ::

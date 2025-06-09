@@ -102,7 +102,7 @@ runFrame :: GlobalHandles -> Frame -> F a -> ResourceT IO a
 runFrame gh@GlobalHandles{..} f@Frame{..} (F r) =
     runReaderT r f `finally` do
         waits <- liftIO $ readIORef fWorkProgress
-        let oneSecond = 1.0e9
+        let timeOut = 1.0e9
         spawn_ $ do
             unless (null waits) $ do
                 let waitInfo =
@@ -110,14 +110,14 @@ runFrame gh@GlobalHandles{..} f@Frame{..} (F r) =
                             { semaphores = V.fromList (fst <$> waits)
                             , values = V.fromList (snd <$> waits)
                             }
-                waitTwice gh waitInfo oneSecond >>= \case
+                waitTwice gh waitInfo timeOut >>= \case
                     TIMEOUT ->
-                        timeoutError $ "Timeed out (" ++ show (oneSecond `div` 1.0e9) ++ "s) waiting for frame to finish on Device"
+                        timeoutError $ "Timeed out (" ++ show (timeOut `div` 1.0e9) ++ "s) waiting for frame to finish on Device"
                     _ -> return ()
-                resetCommandPool ghDevice (fCommandPool fRecycledResources) COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT
-                liftIO $ ghRecycleBin fRecycledResources
+            resetCommandPool ghDevice (fCommandPool fRecycledResources) COMMAND_POOL_RESET_RELEASE_RESOURCES_BIT
+            liftIO $ ghRecycleBin fRecycledResources
 
-                release (fst fResources)
+            release (fst fResources)
 
 initialRecycledResources :: (MonadResource m) => GlobalHandles -> m RecycledResources
 initialRecycledResources GlobalHandles{..} = do
@@ -161,7 +161,7 @@ advanceFrame gh needsNewSwapchain f = do
     -- steal resources from prior frame
     let nib = ghRecycleNib gh
     fRecycledResources <-
-        liftIO $
+        liftIO $!
             nib >>= \case
                 Left block -> block
                 Right rs -> pure rs

@@ -4,7 +4,6 @@ module Render (
     renderFrame,
 ) where
 
-import Control.Monad
 import Control.Monad.IO.Class
 import Control.Monad.Trans.Resource
 import qualified Data.Vector as V
@@ -12,15 +11,14 @@ import Data.Word
 import Frame
 import MonadVulkan
 import Swapchain
-import UnliftIO.Exception
+import UnliftIO
 import Vulkan.CStruct.Extends
 import Vulkan.Core10
-import Vulkan.Core12
 import qualified Vulkan.Core10.CommandBuffer as CommandBufferBeginInfo (CommandBufferBeginInfo (..))
 import qualified Vulkan.Core10.CommandBufferBuilding as RenderPassBeginInfo (RenderPassBeginInfo (..))
 import qualified Vulkan.Core10.FundamentalTypes as Extent2D (Extent2D (..))
 import qualified Vulkan.Core10.Queue as SubmitInfo (SubmitInfo (..))
-import Vulkan.Exception
+import Vulkan.Core12
 import Vulkan.Extensions.VK_KHR_swapchain
 import qualified Vulkan.Extensions.VK_KHR_swapchain as PresentInfoKHR (PresentInfoKHR (..))
 import Vulkan.Zero
@@ -29,7 +27,7 @@ renderFrame :: GlobalHandles -> F ()
 renderFrame GlobalHandles{..} = do
     f@Frame{..} <- askFrame
     let RecycledResources{..} = fRecycledResources
-        oneSecond = 1.0e9 :: Word64
+        timeOut = 1.0e9 :: Word64
         SwapchainResources{..} = fSwapchainResources
         SwapchainInfo{..} = srInfo
 
@@ -38,12 +36,12 @@ renderFrame GlobalHandles{..} = do
     frameRefCount fReleaseFramebuffers
 
     imageIndex <-
-        acquireNextImageKHRSafe ghDevice siSwapchain oneSecond fImageAvailableSemaphore NULL_HANDLE
+        acquireNextImageKHRSafe ghDevice siSwapchain timeOut fImageAvailableSemaphore NULL_HANDLE
             >>= \case
                 (SUCCESS, imageIndex) -> return imageIndex
                 (SUBOPTIMAL_KHR, imageIndex) -> return imageIndex
                 (TIMEOUT, _) ->
-                    timeoutError $ "Timed out (" ++ show (oneSecond `div` 1.0e9) ++ "s) trying to aquire next Image"
+                    timeoutError $ "Timed out (" ++ show (timeOut `div` 1.0e9) ++ "s) trying to aquire next Image"
                 -- (e@ERROR_OUT_OF_DATE_KHR, _) -> -- Failure results are automatically thrown by vulkan bindings
                 --     throwIO $ VulkanException e
                 (e, _) -> throwString $ "Unexpected Result " ++ show e ++ "  from acquireNextImageKHR"

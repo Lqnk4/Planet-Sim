@@ -23,7 +23,7 @@ main = runResourceT $ do
         GLFW.windowHint (GLFW.WindowHint'ContextVersionMajor 3)
         GLFW.windowHint (GLFW.WindowHint'ContextVersionMinor 9)
         GLFW.windowHint (GLFW.WindowHint'ClientAPI GLFW.ClientAPI'NoAPI)
-        GLFW.windowHint (GLFW.WindowHint'Resizable False)
+        GLFW.windowHint (GLFW.WindowHint'Resizable True)
     glfwExtensions <- liftIO $ mapM BS.packCString =<< GLFW.getRequiredInstanceExtensions
 
     let winWidth = 800
@@ -42,12 +42,6 @@ main = runResourceT $ do
     globalHandles <- initGlobalHandles inst dpPhysicalDevice dpDevice dpGraphicsQueue dpPresentQueue
 
     startTime <- liftIO $ fromJust <$> GLFW.getTime
-    let reportFPS f = do
-            endTime <- liftIO $ fromJust <$> GLFW.getTime
-            let frames = fIndex f
-                mean = realToFrac frames / (endTime - startTime)
-            liftIO $ putStrLn $ "Average FPS: " ++ show mean
-
     let frame :: Frame -> ResourceT IO (Maybe Frame)
         frame f =
             liftIO (GLFW.windowShouldClose window) >>= \case
@@ -56,17 +50,24 @@ main = runResourceT $ do
                     fmap Just $ do
                         liftIO GLFW.pollEvents
                         -- liftIO $ GLFW.swapBuffers window
-                        reportFPS f
+                        -- liftIO $ reportFPS startTime f
                         swapchainOutOfDate <- threwSwapchainError $ runFrame globalHandles f (renderFrame globalHandles)
                         windowResized <- windowSizeRef
                         advanceFrame globalHandles (swapchainOutOfDate || windowResized) f
 
     initial <- initialFrame globalHandles window surface
     mainLoop frame initial
-    deviceWaitIdle (ghDevice globalHandles) -- Wait to cleanup resources
+    deviceWaitIdle (ghDevice globalHandles)
 
 mainLoop :: (Monad m) => (a -> m (Maybe a)) -> a -> m ()
 mainLoop f x =
     f x >>= \case
         Nothing -> return ()
         Just x' -> mainLoop f x'
+
+reportFPS :: Double -> Frame -> IO ()
+reportFPS startTime f = do
+    endTime <- liftIO $ fromJust <$> GLFW.getTime
+    let frames = fIndex f
+        mean = realToFrac frames / (endTime - startTime)
+    liftIO $ putStrLn $ "Average FPS: " ++ show mean

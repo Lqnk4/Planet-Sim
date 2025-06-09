@@ -22,7 +22,6 @@ import qualified Vulkan.Core10 as ApplicationInfo (ApplicationInfo (..))
 import qualified Vulkan.Core10 as DeviceQueueCreateInfo (DeviceQueueCreateInfo (..))
 import qualified Vulkan.Core10 as MemoryHeap (MemoryHeap (..))
 import Vulkan.Core12
-import Vulkan.Core13
 import Vulkan.Extensions.VK_KHR_get_physical_device_properties2
 import Vulkan.Extensions.VK_KHR_surface
 import Vulkan.Extensions.VK_KHR_swapchain
@@ -33,7 +32,7 @@ import qualified Vulkan.Utils.Requirements.TH as U
 import Vulkan.Zero
 
 myApiVersion :: Word32
-myApiVersion = API_VERSION_1_3
+myApiVersion = API_VERSION_1_2
 
 createInstance :: forall m. (MonadResource m) => [BS.ByteString] -> m Instance
 createInstance extraExtensions = do
@@ -69,12 +68,12 @@ createDevice inst surf = do
         queueCreateInfos = V.map (\index -> SomeStruct zero{DeviceQueueCreateInfo.queueFamilyIndex = index, queuePriorities = [1]}) uniqueQueueFamilyIndices
         deviceCreateInfo =
             zero{queueCreateInfos = queueCreateInfos}
-        requiredReqs = [U.reqs|
-            1.2
-            VK_KHR_swapchain
-            -- VK_KHR_timeline_semaphore
-            PhysicalDeviceTimelineSemaphoreFeatures.timelineSemaphore
-        |]
+        requiredReqs =
+            [U.reqs|
+                1.2
+                VK_KHR_swapchain
+                PhysicalDeviceTimelineSemaphoreFeatures.timelineSemaphore
+            |]
         optionalReqs = [U.reqs||]
 
     dev <- VkUtils.createDeviceFromRequirements requiredReqs optionalReqs phys deviceCreateInfo
